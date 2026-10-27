@@ -246,7 +246,8 @@ The file is written with comments on first run. The ones you are most likely to 
   no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).
   `re/remote/to_continue.sh` drives a full run into the last Sandbox save, `re/remote/to_menu.sh` stops at the main
   menu, and `re/remote/vehicle.sh <name> jeep|heli` takes direct control of a response facility's jeep or helicopter
-  (switching the mod off live while it clicks through the menus, so the UI is in the screenshots). `JWE3VR_hud.req` saves the HUD texture
+  (switching the mod off live while it clicks through the menus, so the UI is in the screenshots), and
+  `re/remote/reload.sh <name>` leaves the park to the main menu and loads it again. `JWE3VR_hud.req` saves the HUD texture
   (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
   target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).
   `JWE3VR_cbscan.req` searches the game's large read-write memory for the camera position (constant-buffer hunting).

@@ -1,8 +1,9 @@
 -----------------------------------------------------------------------
 --/  @file   JWE3VR.Hooks.lua
 --/  @brief  The mod's own module hooks, so it needs no script extender (ACSE for JWE3 is
---/          unmaintained). A patch runs once per game module: when the module is first required,
---/          or straight away if it was loaded before the hooks were installed.
+--/          unmaintained). A patch runs once per game module table: when the module is first required,
+--/          or straight away if it was loaded before the hooks were installed. A module the game loads
+--/          again (a new table under the same name - leaving a park and loading another) is patched again.
 --/
 --/          Verified against JWE3 build 1792088119 (decompiled Lua):
 --/            * Database.Main calls AddContentToCall on Database.<Pack>LuaDatabase of every loaded
@@ -130,18 +131,19 @@ Hooks.tByKey = {}
 for sName, fn in pairs(Hooks.tPatches) do
     Hooks.tByKey[string.lower(sName)] = {sName = sName, fn = fn, nMilestone = tMilestones[sName]}
 end
-Hooks.tDone = {}
+Hooks.tDone = {} -- lower-case name -> the module table last patched
 
 local Apply = function(sName, tModule)
     if type(sName) ~= "string" or type(tModule) ~= "table" then return end
     local sKey = string.lower(sName)
     local tHook = Hooks.tByKey[sKey]
-    if not tHook or Hooks.tDone[sKey] then return end
-    Hooks.tDone[sKey] = true
+    if not tHook or Hooks.tDone[sKey] == tModule then return end
+    local bAgain = Hooks.tDone[sKey] ~= nil
+    Hooks.tDone[sKey] = tModule
     local bOk, sErr = pcall(tHook.fn, tModule)
     if bOk then
         if tHook.nMilestone then Log(tHook.nMilestone) end
-        Text("patched " .. sName)
+        Text("patched " .. sName .. (bAgain and " (again: the game loaded it anew)" or ""))
     else
         api.debug.Trace("JWE3VR: patching " .. sName .. " failed: " .. tostring(sErr))
         Log(109, tHook.nMilestone or 0)
@@ -175,7 +177,8 @@ local Wrap = function(sGlobal)
     if type(fnOrig) ~= "function" then return end
     global[sGlobal] = function(sName, ...)
         local tModule = fnOrig(sName, ...)
-        if type(sName) == "string" and Hooks.tByKey[string.lower(sName)] and not Hooks.tDone[string.lower(sName)] then
+        if type(sName) == "string" and Hooks.tByKey[string.lower(sName)] and Hooks.tDone[string.lower(sName)] ~= tModule and
+           type(tModule) == "table" then
             Text(sGlobal .. " " .. sName .. " -> " .. type(tModule))
         end
         Apply(sName, tModule)

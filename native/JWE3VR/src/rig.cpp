@@ -4,6 +4,7 @@
 
 #include <deque>
 #include <mutex>
+#include <chrono>
 
 namespace jvr::rig {
 
@@ -20,6 +21,10 @@ static float g_aspect = 16.f / 9.f;
 static uint64_t g_tick = 0;
 static std::deque<RenderRequest> g_requests;
 static RenderRequest g_lastRequest;
+// When the rig stops ticking (no park: the VR manager is gone, a loading screen), the last request must not keep
+// the eyes immersive with a frozen camera: older than this and Present gets none (the flat screen takes over).
+static std::chrono::steady_clock::time_point g_lastPushTime{};
+constexpr auto kRequestStale = std::chrono::milliseconds(1500);
 
 // Last placement, so hand rays use the same frame as the camera.
 static AnchorKind g_kind = AnchorKind::Off;
@@ -254,6 +259,7 @@ TickOutput Tick(const TickInput& in) {
         }
     }
     g_requests.push_back(req);
+    g_lastPushTime = std::chrono::steady_clock::now();
     while (g_requests.size() > 8) g_requests.pop_front();
 
     if (cfg.logPoses && (g_tick % 90) == 0)
@@ -275,7 +281,7 @@ bool TakeRequestForPresent(RenderRequest& out) {
         out = g_lastRequest;
         return true;
     }
-    if (g_lastRequest.tick == 0) return false;
+    if (g_lastRequest.tick == 0 || std::chrono::steady_clock::now() - g_lastPushTime > kRequestStale) return false;
     out = g_lastRequest;
     return true;
 }

@@ -74,7 +74,11 @@ static unsigned g_bbBindsTotal = 0, g_bbFrames = 0;
 // UIDetect = texture: the textures the game draws its UI into (learned), and the redirect's state.
 constexpr int kUiTargets = 4;
 static std::atomic<ID3D12Resource*> g_uiTargets[kUiTargets]{};
+static std::atomic<uint64_t> g_uiTargetSeen[kUiTargets]{}; // frame index it last left RENDER_TARGET for COPY_SOURCE
 static std::atomic<unsigned> g_uiTargetNext{0};
+// A UI texture not seen for this many frames is forgotten: leaving a park frees it, and a new resource at the same
+// address must not have its draws taken for UI (the next park's UI textures are learned anew).
+constexpr uint64_t kUiStaleFrames = 120;
 static std::mutex g_uiTraceLock;
 static std::string g_uiTrace;
 static std::atomic<int> g_uiTraceFrames{0};
@@ -474,8 +478,9 @@ static D3D12_CPU_DESCRIPTOR_HANDLE HandleAt(const D3D12_CPU_DESCRIPTOR_HANDLE* r
 // The game's UI textures (it may use more than one, e.g. one per frame in flight).
 static int UiTextureIndex(ID3D12Resource* r) {
     if (!r) return -1;
+    uint64_t now = g_frameIndex.load();
     for (int i = 0; i < kUiTargets; ++i)
-        if (g_uiTargets[i].load() == r) return i;
+        if (g_uiTargets[i].load() == r && now - g_uiTargetSeen[i].load() < kUiStaleFrames) return i;
     return -1;
 }
 
@@ -495,15 +500,26 @@ static void Trace(char what, int index) {
 // composites them into the final image in a compute pass. A frame-sized 8-bit target leaving RENDER_TARGET for
 // COPY_SOURCE is taken to be one (run 23's census found one such target per frame: the HUD on transparent black).
 static void LearnUiTarget(ID3D12Resource* r, const FrameInfo& f) {
-    if (UiTextureIndex(r) >= 0 || IsFinalImage(r, f) || !f.width) return;
+    uint64_t now = g_frameIndex.load();
+    for (int i = 0; i < kUiTargets; ++i)
+        if (g_uiTargets[i].load() == r && now - g_uiTargetSeen[i].load() < kUiStaleFrames) {
+            g_uiTargetSeen[i] = now; // still in use
+            return;
+        }
+    if (IsFinalImage(r, f) || !f.width) return;
     D3D12_RESOURCE_DESC d = r->GetDesc();
     if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.SampleDesc.Count != 1 || d.DepthOrArraySize != 1 || !IsColor8(d.Format))
         return;
     if (d.Width * 2 < f.width || d.Height * 2 < f.height) return;
-    unsigned slot = g_uiTargetNext.fetch_add(1) % kUiTargets;
+    // A forgotten slot first, else round robin.
+    int slot = -1;
+    for (int i = 0; i < kUiTargets && slot < 0; ++i)
+        if (!g_uiTargets[i].load() || now - g_uiTargetSeen[i].load() >= kUiStaleFrames) slot = i;
+    if (slot < 0) slot = (int)(g_uiTargetNext.fetch_add(1) % kUiTargets);
+    g_uiTargetSeen[slot] = now;
     g_uiTargets[slot] = r;
     static std::atomic<int> logged{0};
-    if (logged.fetch_add(1) < 8)
+    if (logged.fetch_add(1) < 16)
         LOGI("in-world HUD: the game draws its UI into texture %p (#%u, %llux%u, format %d); those draws go to the HUD panel",
              (void*)r, slot, (unsigned long long)d.Width, d.Height, (int)d.Format);
 }

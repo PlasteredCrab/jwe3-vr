@@ -1,6 +1,25 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.13  Leaving a park and loading it again (remote runs 66-68, headset not worn)
+    - New re/remote/reload.sh: park, pause menu (pad START), EXIT TO MAIN MENU, OK, CONTINUE, then the second park's
+      log lines and a frame / HUD pair; every click is gated on a screenshot check.
+    - Run 66 (before the fixes below): the second park never got its VR manager (no Init, no Lua lines, the game's own
+      camera), while Present kept the last rig request forever - the eyes stayed "immersive" with a frozen camera -
+      and the first park's UI textures stayed in the list next to the second park's (half the UI on the eyes).
+    - Fixes: (1) requests older than 1.5 s are dropped, so with no ticking rig (no park, loading screens) the flat
+      screen takes over; (2) a UI texture not seen leaving RENDER_TARGET for COPY_SOURCE in 120 frames is forgotten,
+      so a freed one's address cannot later take another resource's draws for UI; (3) hooks remember the module table
+      they patched, not just the name, so a module the game loads anew is patched again; (4) the VR manager logs the
+      start of its Init and a failed hook sweep (a failure there would look exactly like run 66).
+    - Runs 67 and 68: second park fine both times - VR manager Init 7 s after CONTINUE, rig on the frame (headset's
+      resting pose), UI off the eyes and the second park's UI textures learned into the freed slots. Run 66's cause is
+      not proven (no "patched again" line appeared, so it may not have been the per-table issue); the new Init lines
+      will show it if it returns.
+    - Side finding: in the second park the camera-mode wrappers run ("camera tick: mode Standard, rig kind 1" from the
+      mode path) - its camera component loaded the mode modules through the mod's require; the first park needs the
+      camera-manager instance wrapper. Both put the rig on the frame.
+
 2026-10-27  0.0.12  Foveated rendering measured in JWE3; remote menu check (runs 62-65, headset not worn)
     - A/B in the park, detail (mean |Laplacian|) at the centre and edges: Foveation 1 (HDR targets) = no change at all.
       Foveation 2 (then: every frame-sized target) halved the edge detail but drew dark horizontal seams in the

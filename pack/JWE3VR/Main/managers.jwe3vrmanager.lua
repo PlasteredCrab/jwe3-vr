@@ -24,9 +24,12 @@ JWE3VRManager.Init = function(self, _tProperties, _tEnvironment)
     self.bHooksDone = false
     -- A park runs in its own Lua VM: load the bridge here first, so what the sweep patches gets logged.
     self.bReady = Bridge.Load()
-    -- Catch hooked modules that were loaded through a require captured before ours was installed.
+    if self.bReady then Bridge.Text("VR manager Init begins") end
+    -- Catch hooked modules that were loaded through a require captured before ours was installed (a failure here
+    -- once looked like a park without the VR manager, run 66: logged now).
     local Hooks = require("JWE3VR.Hooks")
-    Hooks.Sweep()
+    local bSwept, sSweepErr = pcall(Hooks.Sweep)
+    if not bSwept and self.bReady then Bridge.Text("hook sweep failed: " .. tostring(sSweepErr)) end
     if not self.bReady then return end
     Bridge.Log(Bridge.M.ManagerInit)
     local tState = {}
