@@ -153,7 +153,7 @@ and `ghidra-home` for Ghidra's settings, cache and temp files).
 
 ## Install
 
-Untested in the game so far. The pack's `Main.ovl` is built with cobra-tools (`E:\Modding\tools\cobra-tools`, a
+Installed and run in JWE3 on the dev machine with `-NoProxy` (headset not worn yet). The pack's `Main.ovl` is built with cobra-tools (`E:\Modding\tools\cobra-tools`, a
 Python 3.11 venv; see `re/lua/README.md`). Close the game, then:
 
 ```bash
@@ -170,10 +170,34 @@ game folder. ACSE is not required.
 ## Run
 
 1. Game settings first: **windowed or borderless**, **HDR off**, **frame generation off**, motion blur,
-   depth of field, film grain and chromatic aberration off. Prefer the game's TAA over DLSS (TAA gets a history
-   per eye; DLSS does not).
+   depth of field, film grain and chromatic aberration off. Prefer the game's TAA over DLSS. (With the
+   `version.dll` install TAA can keep a history per eye; with `-NoProxy` it keeps one shared history.)
 2. Start your OpenXR runtime (SteamVR, Oculus/Meta, Virtual Desktop/VDXR) with the headset on.
 3. Start the game and load a park. Stand (or sit) facing forward and click both thumbsticks to recentre.
+
+## First headset test
+
+None of this has been seen in a worn headset yet. Go through it in order; each step names the line in
+`Win64\ovldata\JWE3VR\JWE3VR.log` that says it works. When a step fails, note which one and keep the log.
+
+1. **Main menu:** the menu is a large flat screen in front of you and the game window keeps working. Log:
+   "swapchains 1920x1080 format 24" and, every 10 s, "frames: ... OpenXR state 5" (5 = focused; 3 means the
+   headset is not being worn or the runtime is not showing the game).
+2. **Park, head tracking:** load the Sandbox park. You look down on the park as a 1:30 model. Turning and leaning
+   move the view one to one, with no lag or swimming and the horizon level. Log: "camera tick (manager path): mode
+   Standard, VR override 1.0".
+3. **Stereo depth:** close one eye, then the other: the two views must differ, and near things must look near. If
+   the depth looks inside-out, doubled or a frame late, try `AERPresentLag` 0, 1 or 2, or flip `SwapEyes` (the ini
+   reloads live).
+4. **In-world HUD:** the game's toolbar and bottom bar float on a panel a little below eye level and follow when
+   you turn away; nothing of the UI is painted flat on the eyes. Log: "the game draws its UI into texture",
+   "the UI now goes to the panel", "in-world HUD active".
+5. **Controllers:** a dot shows where the dominant laser hits the ground; the trigger selects; one grip drags the
+   park, both grips scale and rotate it. Point at the HUD panel: the cursor follows and the trigger clicks a toolbar
+   button.
+6. **Tablet and recentre:** off-hand B/Y brings up the game screen with its HUD in front of you and hides it again;
+   clicking both thumbsticks recentres.
+7. **Frame rate:** the "frames: ... fps" line should be near the headset's refresh rate (72, 80 or 90).
 
 ## Settings (`Win64\ovldata\JWE3VR\JWE3VR.ini`, saved changes apply live)
 

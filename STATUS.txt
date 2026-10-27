@@ -1,6 +1,15 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.7  HUD texture made thread-safe; first-headset-test checklist (remote run 37, headset not worn)
+    - The HUD texture, its two views and its size/format were plain globals rewritten on the render thread while
+      game threads redirect into them (a torn read of a view could send UI draws to a wrong resource). Now each
+      generation (texture + its own descriptor heap + size/format) is published as one object; old ones are kept.
+    - Texture mode no longer creates a first HUD texture and panel swapchain in the backbuffer's format before the UI
+      textures are seen; run 37: one texture (typeless RGBA8), one panel swapchain (RGBA8 sRGB), HUD clean as before.
+    - README: new "First headset test" (seven steps, each with the log line that confirms it); Install no longer says
+      untested; the TAA advice now says per-eye history needs the version.dll install.
+
 2026-10-27  0.0.6  Per-eye TAA and sync stereo: blocked on the no-proxy install (remote runs 27-36, headset not worn)
     - Census extended to every large texture (events per frame: bound, render target, UAV, read, copy) and copies
       between them. Run 27: 60 textures; the TAA history is a ping-pong pair of 1920x1080 RGBA16 textures (one only
