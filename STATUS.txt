@@ -1,6 +1,13 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.21  The pause menu goes to the in-world HUD panel (run 96, headset not worn)
+    - With the VR view on in the park, pad START: the game's OPTIONS menu (RESUME, SAVE, LOAD, SETTINGS, EXIT TO
+      MAIN MENU, QUIT GAME, on its dark full-screen backdrop) was drawn into the HUD texture, and the eye frame
+      kept showing the park with no menu on it. So in the headset the pause menu should be on the HUD panel, where
+      the overview laser points and clicks. Pad B resumed; the HUD texture went back to the toolbar and bottom bar.
+      Not seen: the panel itself or laser clicks on it (needs the headset and controllers).
+
 2026-10-27  0.0.20  Sophos check after the input changes; pending dumps cannot block a resize (run 95)
     - Sophos: no detection or quarantine files written today, and none of the 35 Sophos files written in the last
       14 hours mentions JWE3, the game folder or openxr_loader (after 0.0.17 moved the laser to posted window

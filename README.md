@@ -217,6 +217,8 @@ steps 2, 4 and 8-12, and the rig on the rendered frame). Go through it in order;
    button.
 6. **Tablet and recentre:** off-hand B/Y brings up the game screen with its HUD in front of you and hides it again;
    clicking both thumbsticks recentres.
+6a. **Pause menu:** the menu button pauses; the game's options menu appears on the HUD panel (not on your eyes)
+   and the laser clicks RESUME.
 7. **Frame rate:** the "frames: ... fps" line should be near the headset's refresh rate (72, 80 or 90).
 8. **Jeep:** point at a ranger jeep and press dominant A (or use the response facility's DIRECT CONTROL). You sit
    in the driver's seat at the game's own seat camera and look around with your head; the triggers drive, the left
