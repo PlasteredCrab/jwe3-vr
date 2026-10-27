@@ -17,7 +17,8 @@ print(*Image.open(r'E:/Modding/Jurassic Park Evolution 3 VR/re/work/$1.png').con
 green() { read -r r g b <<< "$(pixel "$1" "$2" "$3")"; [ "$g" -gt 220 ] && [ "$r" -lt 190 ] && [ "$b" -gt 160 ] && [ "$b" -lt 230 ]; }
 mod() { sed -i "s/^Enabled = [01]/Enabled = $1/" "$D/JWE3VR.ini"; sleep 5; }
 
-bash re/remote/to_continue.sh "$name" 2>&1 | grep -E "game up|park after|ending|differs|stopping|lua error"
+bash re/remote/to_continue.sh "$name" 2>&1 | grep -E "game up|park after|ending|differs|stopping|lua error|dialog"
+[ "${PIPESTATUS[0]}" -eq 0 ] || { echo "to_continue.sh failed; stopping"; exit 1; }
 mod 0
 # Wait for the loading screen (dark blue) to give way to the park.
 for i in $(seq 1 20); do

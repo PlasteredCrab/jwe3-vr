@@ -24,6 +24,21 @@ fi
 echo "game up after $((SECONDS-start))s"; sleep 20
 cd "$P"
 bash re/remote/step.sh "${run}_menu" "FOCUS+CLICK=0.4135,0.8315 100" "- 2000" | grep -v "pad script"
+# Only click CONTINUE on the main menu itself (logo crisp, CONTINUE row lit). Run 63 opened on the "Exit game?"
+# dialog instead (cause unknown); CANCEL that once and look again, else stop without clicking.
+screen() { "/e/Modding/tools/cobra-tools/.venv/Scripts/python" -E -c "
+import numpy as np
+from PIL import Image
+a = np.asarray(Image.open(r'E:/Modding/Jurassic Park Evolution 3 VR/re/work/$1.png').convert('L'), dtype=np.float32)
+logo, cont = a[20:110, 30:165].std(), a[175:195, 30:130].mean()
+print('menu' if logo > 50 and cont > 80 else ('exitdialog' if logo < 10 else 'other'))"; }
+s=$(screen "${run}_menu")
+if [ "$s" = "exitdialog" ]; then
+  echo "the Exit game dialog is open; pressing CANCEL"
+  bash re/remote/step.sh "${run}_menu2" "FOCUS+CLICK=0.5,0.633 100" "- 400" "CLICK=0.5,0.633 100" "- 2000" | grep -v "pad script"
+  s=$(screen "${run}_menu2")
+fi
+if [ "$s" != "menu" ]; then echo "not at the main menu ($s); stopping without clicking (see re/work/${run}_menu.png)"; exit 1; fi
 printf '%s\n' "FOCUS+CLICK=0.079,0.343 100" "- 300" "CLICK=0.079,0.343 100" "- 500" > "$D/JWE3VR_pad.txt"
 start=$SECONDS
 until grep -q "VR manager Init\|lua error" "$D/JWE3VR.log" || [ $((SECONDS-start)) -gt 180 ]; do sleep 3; done

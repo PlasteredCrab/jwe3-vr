@@ -269,10 +269,38 @@ static void BuildShadingRateImage(const FrameInfo& f) {
          c.foveaInnerDeg, c.foveaMidDeg, c.foveaOuterDeg);
 }
 
+static int UiTextureIndex(ID3D12Resource* r);
+
+// Per frame: frame-sized render-target bindings, and those that got the rate image (logged once a minute: JWE3
+// shades materials into 8-bit G-buffer targets and lights them in compute, which shading rates do not reach).
+static std::atomic<unsigned> g_vrsFrameSized{0}, g_vrsBoundBinds{0};
+
+// Colour targets coarse shading may write: albedo / HDR / packed-colour formats. Integer targets (JWE3's frame-sized
+// R32_UINT G-buffer IDs) and two-channel ones (R16G16 motion vectors) are left at full rate: shaded coarsely they gave
+// dark seams in the foveated region (run 62).
+static bool IsShadedColour(DXGI_FORMAT f) {
+    switch (f) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+        return true;
+    default:
+        return IsHdr(f);
+    }
+}
+
 static void ApplyVrs(ID3D12GraphicsCommandList* list, ListState& s, const RtvInfo* rt0, const FrameInfo& f) {
     const Settings& c = config::Get();
-    bool want = c.foveation > 0 && g_vrsSupported && g_sri && f.immersive && rt0 && s.uiDepth < 0 && rt0->width == f.width &&
-                rt0->height == f.height && (c.foveation == 2 || IsHdr(rt0->format));
+    bool frameSized = rt0 && rt0->width == f.width && rt0->height == f.height;
+    // The UI textures stay at full rate in every mode (they become the HUD panel).
+    bool want = c.foveation > 0 && g_vrsSupported && g_sri && f.immersive && frameSized && s.uiDepth < 0 &&
+                (c.foveation == 2 ? IsShadedColour(rt0->format) : IsHdr(rt0->format)) && UiTextureIndex(rt0->resource) < 0;
+    if (frameSized) {
+        ++g_vrsFrameSized;
+        if (want) ++g_vrsBoundBinds;
+    }
     if (!s.checked5) {
         s.checked5 = true;
         if (SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&s.l5)))) s.l5->Release(); // same object as the list
@@ -1042,6 +1070,21 @@ void OnPresent(const FrameInfo& info) {
         g_bbFrames = g_bbBindsTotal = 0;
     }
     if (config::Get().foveation > 0 && info.immersive) BuildShadingRateImage(info);
+    {
+        static unsigned frames = 0, sized = 0, bound = 0;
+        static ULONGLONG last = 0;
+        sized += g_vrsFrameSized.exchange(0);
+        bound += g_vrsBoundBinds.exchange(0);
+        ++frames;
+        ULONGLONG now = GetTickCount64();
+        if (!last) last = now;
+        if (now - last >= 60000 && info.immersive) {
+            LOGI("foveation (mode %d): %.1f of %.1f frame-sized render-target bindings per frame got the rate image",
+                 config::Get().foveation, bound / (double)frames, sized / (double)frames);
+            frames = sized = bound = 0;
+            last = now;
+        }
+    }
     EnsureUiTexture(info);
     CensusAtPresent();
     if (g_uiTargets[0].load() && g_uiTraceFrames.load() < 24) {

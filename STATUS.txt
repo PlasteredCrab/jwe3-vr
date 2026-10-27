@@ -1,6 +1,22 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.12  Foveated rendering measured in JWE3; remote menu check (runs 62-65, headset not worn)
+    - A/B in the park, detail (mean |Laplacian|) at the centre and edges: Foveation 1 (HDR targets) = no change at all.
+      Foveation 2 (then: every frame-sized target) halved the edge detail but drew dark horizontal seams in the
+      foveated region; it rate-shaded the frame-sized R32_UINT targets (IDs) and the R16G16 one (motion vectors).
+      Mode 2 now covers colour formats only (RGBA8 / BGRA8 / R10G10B10A2 / HDR) and never the UI textures: 8 of 19
+      frame-sized bindings per frame, no seams - and no visible change either. JWE3 apparently rasterises IDs and
+      shades materials and lighting in compute, which shading rates cannot reach, so VRS foveation saves little
+      here (not profiled: no GPU timings over RDP). New log line once a minute: "foveation (mode N): x of y
+      frame-sized render-target bindings per frame got the rate image".
+    - Run 63 opened on the main menu's "Exit game?" dialog (cause not found; connecting / disconnecting the scripted
+      pad at the menu does not do it, run 64), so CONTINUE was clicked into the dialog and the park never loaded; the
+      game later quit cleanly (no crash, no driver event, nothing about the game or mod in the Sophos logs - only a
+      Sophos self-update failing to restore some old Unity Hub files). to_continue.sh now checks the menu screenshot
+      (logo contrast, CONTINUE row) before clicking, presses CANCEL on the Exit dialog, and otherwise stops;
+      vehicle.sh stops when to_continue.sh fails.
+
 2026-10-27  0.0.11  Vehicle transitions with the virtual pad (remote runs 59-61, headset not worn)
     - Jeep: pad Y -> gun seat (rig kind 4 at the gun mount), B -> back to the driver's seat (FirstPersonVehicle, rig
       kind 3), B -> out of the vehicle (park camera, rig kind 1, no UI mode left). Helicopter: B -> out, camera back to

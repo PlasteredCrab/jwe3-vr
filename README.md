@@ -40,7 +40,9 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 **Performance**
 - One culling pass for both eyes (a single wide view that covers both).
 - Fixed foveated rendering (variable rate shading): full detail where you look, coarser toward the edges of
-  each eye. Needs a GPU with VRS tier 2 (NVIDIA RTX 20 or newer, AMD RX 6000 or newer, Intel Arc).
+  each eye. Needs a GPU with VRS tier 2 (NVIDIA RTX 20 or newer, AMD RX 6000 or newer, Intel Arc). In JWE3 it
+  saves little: the game rasterises IDs and shades materials and light in compute passes, which shading rates do
+  not reach (measured: no visible change at the edges in modes 1 and 2).
 - Separate TAA history per eye, so neither eye smears in the other's image (needs the `version.dll` install,
   see Troubleshooting).
 - In the experimental both-eyes mode, shadows, GI and skinning run once for both eyes.
@@ -222,7 +224,7 @@ The file is written with comments on first run. The ones you are most likely to 
 | `Input.LeftHanded`, `Input.GunnerAimGain` | Handedness; how hard the gun chases your hand |
 | `UI.WorldHud`, `UI.HudDistance`, `UI.HudWidth` | In-world HUD panel on/off, distance and size |
 | `UI.UIDetect` | How the UI is found: `texture` (default, JWE3), `backbuffer`, `markers` |
-| `Performance.Foveation` | 0 off, 1 scene passes (default), 2 all frame-sized passes |
+| `Performance.Foveation` | 0 off, 1 HDR scene passes (default), 2 all frame-sized colour passes (never the UI or ID / motion-vector targets) |
 | `Performance.FoveaInnerDeg` / `MidDeg` / `OuterDeg` | Where shading drops to half, quarter and 4x4 |
 | `Performance.PerEyeTAA` | Separate TAA history per eye (alternate-eye mode) |
 | `Performance.MarkerDump` | Log the game's render pass names (to tune the marker lists) |

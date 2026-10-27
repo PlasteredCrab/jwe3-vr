@@ -77,7 +77,8 @@ HudFollowDeg = 40
 SharedPassMarkers = DirectionalShadow,ReflectiveShadowMap,LPV,EnvironmentCapture,MegaTextureBake,SkinningProcessor,HeightVariance
 ; Log every render pass marker name once (use this to tune SharedPassMarkers, UIMarkers, TAAMarkers).
 MarkerDump = 0
-; Fixed foveated rendering (D3D12 variable rate shading tier 2): 0 off, 1 HDR scene passes, 2 all frame-sized passes.
+; Fixed foveated rendering (D3D12 variable rate shading tier 2): 0 off, 1 HDR scene passes, 2 all frame-sized colour
+; passes (not the UI, ID or motion-vector targets). JWE3 shades most of the frame in compute, which this cannot reach.
 ; Angles from the eye centre: full rate inside Inner, half rate to Mid, quarter rate to Outer, 4x4 beyond.
 Foveation = 1
 FoveaInnerDeg = 20
