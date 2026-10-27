@@ -207,6 +207,36 @@ Camera.TryWrapInstance = function(cmm)
     Bridge.Text("camera: wrapped the camera manager instance's Advance" .. (bModule and " (over the module patch)" or ""))
 end
 
+-- The gunner's character sits at the gun mount, right where the VR eye is (seen in game, run 78: their head and cap
+-- filled the view). Its model is "./CharacterPivot/Character" under the gunner entity (basegunner prefab; the gunner
+-- entity itself is not in the scene graph, run 79). Hidden through the scene graph while the headset view is in the
+-- gun seat (as the game hides dinosaurs in storage), shown again otherwise: the flat screen, the mod switched off and
+-- every other seat keep the game's own look. Aiming and firing go through the gunner entity, not the model.
+-- Tried once per gun-seat stay, hidden or not, so a failure is logged once, not every frame.
+Camera.SetGunnerHidden = function(tWorld, nGunner)
+    if Camera.nHiddenGunner == nGunner then return end
+    local scenegraph = tWorld and tWorld.scenegraph
+    if not scenegraph or not scenegraph.SetHidden then return end
+    -- Handled in another park's scene graph: that entity is gone, and its id may name something else here.
+    if Camera.oHiddenIn ~= scenegraph then Camera.nHiddenGunner, Camera.nHiddenModel = nil, nil end
+    if Camera.nHiddenGunner == nGunner then return end
+    if Camera.nHiddenModel then
+        pcall(scenegraph.SetHidden, scenegraph, Camera.nHiddenModel, false) -- fails harmlessly if it is gone
+        Bridge.Text("gunner model " .. tostring(Camera.nHiddenModel) .. " shown again")
+    end
+    Camera.nHiddenGunner, Camera.nHiddenModel, Camera.oHiddenIn = nGunner, nil, scenegraph
+    if not nGunner then return end
+    local bFound, nModel = pcall(api.entity.FindEntityByName, "./CharacterPivot/Character", nGunner)
+    if not bFound or global.type(nModel) ~= "number" or nModel <= 0 then
+        Bridge.Text("gunner " .. tostring(nGunner) .. ": no character model found (" .. tostring(nModel) .. "); left visible")
+        return
+    end
+    local bOk, sErr = pcall(scenegraph.SetHidden, scenegraph, nModel, true)
+    if bOk then Camera.nHiddenModel = nModel end
+    Bridge.Text("gunner " .. tostring(nGunner) .. ": character model " .. tostring(nModel) ..
+                (bOk and " hidden in the gun seat" or (" not hidden: " .. tostring(sErr))))
+end
+
 Camera.ManagerTick = function(nDt, bFromInstance)
     if not Bridge.IsLoaded() then return end
     if not bFromInstance and Camera.nInstanceTicks ~= Camera.nInstanceSeen then
@@ -255,7 +285,7 @@ Camera.ManagerTick = function(nDt, bFromInstance)
     if sTag and sGameMode and Camera.tModeKinds[sGameMode] == K.Overview then sMode = sGameMode end
     local nKind = Camera.KindFor(sMode)
     local vPos, vR, vU, vF = anchor:GetPos(), anchor:GetR(), anchor:GetU(), anchor:GetF()
-    local sSeat = nil
+    local sSeat, nSeatGunner = nil, nil
     if sTag == "drive" and sGameMode == "ThirdPersonVehicle" then
         sSeat = Camera.RequestSeatCamera(cmm, tWorld, Gameplay)
     elseif sGameMode == "FirstPersonVehicle" then
@@ -277,6 +307,7 @@ Camera.ManagerTick = function(nDt, bFromInstance)
                             global.string.format("%.1f", global.math.sqrt(dx * dx + dy * dy + dz * dz)) .. " m from the game camera")
             end
             vPos, vR, vU, vF = vMount, body:GetR(), body:GetU(), body:GetF()
+            nSeatGunner = nGunner
         else
             nKind = K.Seat -- no gun seat known: sit where the game camera is
             if Camera.nGunFallback ~= nGunner then
@@ -295,8 +326,9 @@ Camera.ManagerTick = function(nDt, bFromInstance)
     local bOverride, px, py, pz, fx, fy, fz, ux, uy, uz, nFovY = Bridge.Tick(nKind, nDt or 0, vPos, vR, vU, vF)
     if Camera.nLoggedOverride ~= bOverride then
         Camera.nLoggedOverride = bOverride
-        Bridge.Text("camera tick (manager path): mode " .. sMode .. ", VR override " .. tostring(bOverride))
+        Bridge.Text("camera tick: mode " .. sMode .. ", VR override " .. tostring(bOverride))
     end
+    Camera.SetGunnerHidden(tWorld, bOverride == 1 and nSeatGunner or nil)
     if bOverride ~= 1 then
         Camera.lastSet = nil
         return

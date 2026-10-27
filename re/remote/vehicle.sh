@@ -17,7 +17,7 @@ pixel() { py "
 from PIL import Image
 print(*Image.open(r'E:/Modding/Jurassic Park Evolution 3 VR/re/work/$1.png').convert('RGB').getpixel(($2, $3)))"; }
 # Where the response facility is in a screenshot, as "x,y" fractions: the largest cluster of white building
-# pixels below the horizon, else of grey ones, else the middle of the view.
+# pixels below the horizon, else of grey ones, else "none".
 facility() { py "
 import numpy as np
 from PIL import Image
@@ -35,7 +35,7 @@ for lo, need in ((175, 20), (110, 200)):
     cy, cx = np.unravel_index(hist.argmax(), hist.shape)
     sel = (abs(ys // g - cy) <= 4) & (abs(xs // g - cx) <= 4)
     print('%.3f,%.3f' % (xs[sel].mean() / w, ys[sel].mean() / h)); break
-else: print('0.5,0.52')"; }
+else: print('none')"; }
 green() { read -r r g b <<< "$(pixel "$1" "$2" "$3")"; [ "$g" -gt 220 ] && [ "$r" -lt 190 ] && [ "$b" -gt 160 ] && [ "$b" -lt 230 ]; }
 mod() { sed -i "s/^Enabled = [01]/Enabled = $1/" "$D/JWE3VR.ini"; sleep 5; }
 
@@ -51,11 +51,17 @@ for i in $(seq 1 20); do
   [ "$g" -gt 80 ] && [ "$g" -gt "$b" ] && break
   sleep 5
 done
-# The park camera moves to its saved place a while after the park shows (seen: run 75 looked at bare grass): settle.
-sleep 20
-bash re/remote/step.sh "${name}_wait" | tail -1 >/dev/null
+# The park camera moves to its saved place a while after the park shows - seconds to minutes (runs 75 and 80 looked
+# at bare grass at first): look again every 15 s for up to 3 minutes.
+for i in $(seq 1 12); do
+  [ -n "$at" ] && break
+  f=$(facility "${name}_wait")
+  [ "$f" != none ] && at=$f && break
+  sleep 15
+  bash re/remote/step.sh "${name}_wait" | tail -1 >/dev/null
+done
+[ -n "$at" ] || { echo "no response facility in view; stopping (look at re/work/${name}_wait.png)"; mod 1; exit 1; }
 row_y=0.36; [ "$which" = "heli" ] && row_y=0.483   # Ranger Team 1 / Capture Team 1 in the facility panel
-[ -n "$at" ] || at=$(facility "${name}_wait")
 echo "response facility at $at"
 open_team() {
   bash re/remote/step.sh "${name}_fac$1" "CLICK=$at 100" "- 400" "CLICK=$at 100" "- 3000" | tail -1

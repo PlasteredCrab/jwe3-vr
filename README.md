@@ -11,7 +11,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > mod loads without a proxy DLL, the Lua bridge and hooks run, OpenXR starts on SteamVR, and in a Sandbox park the
 > VR rig drives the rendered camera (headset FOV, the two eyes' positions, foveated rendering on), the game's UI is
 > moved out of the eye images into the in-world HUD panel's texture, taking direct control of a ranger jeep or the
-> capture helicopter puts you in its seat in first person, the gun seat puts you at the gun mount, and the
+> capture helicopter puts you in its seat in first person, the gun seat puts you at the gun mount (the gunner's
+> own model hidden), and the
 > virtual Xbox pad reaches the game (a scripted pad drove the jeep, lifted the helicopter off and entered both gun seats).
 > Not yet seen: head motion and stereo depth in a worn headset, the HUD panel itself in the headset, the VR
 > controllers, walking (guest view), and
@@ -55,7 +56,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Ranger jeep and helicopter: you sit in the driver's seat (the game's own first-person seat camera); the
   controllers act as an Xbox pad, and gripping with both hands turns them into a steering wheel.
 - Gun seats (jeep and helicopter): the dart, medicine and camera guns follow your hand; the trigger fires; the
-  game's own ammo switch keeps the HUD right.
+  game's own ammo switch keeps the HUD right. The gunner character (who stands where your eyes are) is hidden while
+  you are in the seat and comes back on the flat screen.
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
   ranger team or ACU helicopter into the game's own order screen.
 - On-foot ranger: while walking, carry a dart rifle, a medicine gun or a radio. Darts count toward the game's

@@ -1,6 +1,24 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.15  The gunner's own model is hidden in the gun seats (remote runs 79-82, headset not worn)
+    - In the gun seat the VR eye sits at the gun mount, where the gunner character is: their head, cap and rifle
+      filled the view (run 78/79 screenshots). The game itself only hides entities for the first-person vehicle
+      camera (tEntitiesToHide, moved 1000 m down), never in the gun seat.
+    - The gunner entity ("./Gunner" under the vehicle) is not in the scene graph (SetHidden: "Entity is not in the
+      scene graph", run 79); its character is "./CharacterPivot/Character" under it (basegunner prefab), found with
+      api.entity.FindEntityByName and hidden with the world API's scenegraph:SetHidden - the call the game uses for
+      dinosaurs in storage. The rifle goes with it (it hangs off the character's hand joint).
+    - Hidden only while the headset view is in the gun seat; shown again on leaving the seat, with the mod switched
+      off live, or whenever the rig is not overriding (the flat screen keeps the game's own gun view). Tried once per
+      stay in the seat (a failure is logged once, not every frame), and an id hidden in another park's scene graph is
+      forgotten rather than "shown again" in the next one.
+    - Seen in game: helicopter (run 81) - gunner and rifle gone from the view at the mount; mod off -> the game's own
+      gun view with the gunner back; mod on -> hidden again; B -> pilot seat, "shown again"; jeep (run 82) - the
+      rear bed empty from the mount. Aiming and firing with the model hidden were not tried (no controllers).
+    - vehicle.sh: the park camera can take minutes to reach its saved place after loading (run 80 looked at bare
+      grass after the 20 s pause); it now looks for the facility every 15 s for up to 3 minutes before stopping.
+
 2026-10-27  0.0.14  One camera path; helicopter gun seat; test tooling fixes (remote runs 69-78, headset not worn)
     - One camera path: the rig runs right after the camera manager's own Advance, through a patch of the
       CameraModeManager module (runs 72-78: "driven via module patch", 1233-1889 ticks per park), with a wrapper on
