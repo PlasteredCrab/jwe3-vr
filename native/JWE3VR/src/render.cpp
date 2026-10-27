@@ -441,6 +441,22 @@ static std::vector<PendingDump> g_pendingDumps; // render thread only
 constexpr ULONGLONG kDumpGiveUpMs = 30000;
 
 // Saves the dumps whose copies have finished (each Present).
+static void PollDumps();
+
+// Before the swapchain's buffers are resized: a pending dump of a backbuffer holds a reference to it, and
+// ResizeBuffers fails while any is held. The game has flushed its queue before resizing, and our copies run on that
+// queue, so they are done: save them now, and release any still not reported done rather than fail the resize.
+static void FinishDumpsBeforeResize() {
+    if (g_pendingDumps.empty()) return;
+    WaitCopies(2000);
+    PollDumps();
+    for (PendingDump& p : g_pendingDumps) {
+        LOGW("debug: %ls dropped before ResizeBuffers (copy not reported done)", p.file.c_str());
+        p.source->Release(); // the readback buffer is leaked: the GPU may still write it
+    }
+    g_pendingDumps.clear();
+}
+
 static void PollDumps() {
     if (g_pendingDumps.empty()) return;
     UINT64 done = CopyFenceCompleted();
@@ -771,6 +787,7 @@ static HRESULT STDMETHODCALLTYPE Hk_Present1(IDXGISwapChain1* sc, UINT sync, UIN
 
 static HRESULT STDMETHODCALLTYPE Hk_Resize(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags) {
     LOGI("ResizeBuffers %ux%u", w, h);
+    FinishDumpsBeforeResize();
     return o_Resize(sc, n, w, h, f, flags);
 }
 

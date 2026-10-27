@@ -1,6 +1,15 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.20  Sophos check after the input changes; pending dumps cannot block a resize (run 95)
+    - Sophos: no detection or quarantine files written today, and none of the 35 Sophos files written in the last
+      14 hours mentions JWE3, the game folder or openxr_loader (after 0.0.17 moved the laser to posted window
+      messages and 0.0.18 added the drive request). No nvlddmkm / display events in the System log.
+    - A pending debug dump holds a reference to a backbuffer, and ResizeBuffers fails while one is held: the resize
+      hook now saves the finished dumps first and lets go of any still pending (the game flushes its queue before
+      resizing, and our copies run on it). Not exercised: a resize cannot be caused remotely without OS input.
+      Run 95: screenshots still save, 0.1-0.9 s after their requests.
+
 2026-10-27  0.0.19  Regression run of a park reload; the helicopter has no photo mode; headset checklist (runs 93-94)
     - Run 93 (reload.sh, everything since 0.0.13 in): second park's VR manager Init 9 s after CONTINUE, rig on the
       frame ("camera tick: mode Standard, VR override 1.0"), the second park's two UI textures learned, eyes free of
