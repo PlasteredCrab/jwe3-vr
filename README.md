@@ -12,9 +12,9 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > VR rig drives the rendered camera (headset FOV, the two eyes' positions, foveated rendering on), the game's UI is
 > moved out of the eye images into the in-world HUD panel's texture, taking direct control of a ranger jeep or the
 > capture helicopter puts you in its seat in first person, the gun seat puts you at the gun mount, and the
-> virtual Xbox pad reaches the game (a scripted pad drove the jeep and entered the gun seat). Not yet seen: head
-> motion and stereo depth in a worn headset, the HUD panel itself in the headset, the VR controllers, walking
-> (guest view), and
+> virtual Xbox pad reaches the game (a scripted pad drove the jeep, lifted the helicopter off and entered both gun seats).
+> Not yet seen: head motion and stereo depth in a worn headset, the HUD panel itself in the headset, the VR
+> controllers, walking (guest view), and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
@@ -99,11 +99,12 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Walking, radio | Dominant trigger on a vehicle | Take control of it |
 | Walking, radio | Dominant trigger on a dinosaur or building | Send the nearest ranger team (hold off-hand grip: ACU helicopter) |
 | Walking, radio | Dominant A | Call the nearest free jeep to where you stand |
-| Jeep / helicopter seat | Right / left trigger | Gas / brake (as the game's pad layout) |
+| Jeep seat | Right / left trigger | Gas / brake (as the game's pad layout) |
+| Helicopter seat | Right / left trigger | Climb / descend (right trigger also takes off) |
 | Jeep / helicopter seat | Left stick | Steer |
 | Jeep / helicopter seat | Both grips, turn your hands | Steering wheel |
 | Jeep / helicopter seat | Head | Look around |
-| Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3) |
+| Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3; the helicopter only once it is in the air) |
 | Jeep / helicopter seat, gun seat | Dominant B | The game's Back (pad B): gun seat to driver's seat, then out of the vehicle |
 | Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
 | Gun seat | Dominant hand | Aim (the gun follows it) |
@@ -128,10 +129,10 @@ Nothing below has been confirmed at runtime.
 | Lua bindings | 5,422 found; 90 (1.7%) jump into the VM. JWE3 adds a second registration pattern (function in `r8`, name in `rdx`) | `luaapi.py` reads both patterns |
 | Content-pack Lua loading | `Database.Main` calls `AddContentToCall` on `Database.<Pack>LuaDatabase` for every loaded pack, at startup | None |
 | Park manager injection | `EnvironmentPrototype.Managers` as on JWE2, but `Environment.Environment` loads prototypes through a `require` saved at game start, past our wrap | Hooks wrap `Environment._MergePrototype` to load the prototype through our `require` first |
-| Camera choke point | `CameraModeManager.Advance` -> `SetTransform(main camera, tFinal.transformQ)`, `SetFOVY(nCameraFOV / nMagnify)`; `GetConfig().bCameraShake`; walking eye height 1.67 m (metres). In game: the camera component runs in a Lua state the mod cannot reach, so wrapping it does nothing | The VR manager reads the game's camera each frame and writes the VR camera over it (seen working); new modes mapped: Freelook and MapGenerator (overview), NestExit (flat screen) |
+| Camera choke point | `CameraModeManager.Advance` -> `SetTransform(main camera, tFinal.transformQ)`, `SetFOVY(nCameraFOV / nMagnify)`; `GetConfig().bCameraShake`; walking eye height 1.67 m (metres). The world API's `CameraModeManager` is the camera component itself, and it writes the main camera after the park managers every frame, so a write from the VR manager reaches only the FOV | One camera path: the rig runs right after the camera manager's `Advance` (a patch of the module, or a wrapper on the instance made before the patch), with the VR manager as the fallback; camera shake off; new modes mapped: Freelook and MapGenerator (overview), NestExit (flat screen) |
 | Lua states | A park shares the startup Lua state; `api.*` tables are read-only ("Scripts may NOT modify the API") | Laser picking wraps `Helpers.RaycastUtils.GetCursorRaycast` instead of `api.input.GetMouseRay` |
 | Vehicle entry | Same `RequestChangeUI` / `DriveVehicle` call; JWE2's `_SetCameraMode` is gone; `StartInFirstPerson` init flag is new | Drive-mode patch sets `StartInFirstPerson` |
-| Gunner aim and ammo | `GetCameraAimDirection`, `GetCameraAttachTransform`, `tModeData.gunnerID`, `VehicleGunnerUIMode:_SwitchAmmo` unchanged | None |
+| Gunner aim and ammo | `GetCameraAimDirection`, `GetCameraAttachTransform`, `VehicleGunnerUIMode:_SwitchAmmo` unchanged | The gunner and vehicle IDs come from the gun seat UI mode itself (`nGunnerEntityID`, `nVehicleEntityID`) |
 | Staff orders | `SelectVehicleDestination` with `{Vehicle, OrderPriority}` unchanged; `FindAvailableRangerCar` / `FindAvailableACUHelicopter` removed | New `jwe3vr.vehicles.lua` finds the nearest ranger car / ACU helicopter from the AI director's own tables |
 | On-foot tools | `Tranquillise`, `IsDiseased`, `RemoveDisease`, `GetApproxNumDartsToCure` / `ToTreat` present; no `...ToTranquillise` | None (falls back to 3 darts) |
 | Cursor ray | `Helpers.RaycastUtils` still calls `api.input.GetMouseRay` | None |
@@ -245,8 +246,9 @@ The file is written with comments on first run. The ones you are most likely to 
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), `FOCUS`, keys and pad buttons (format in `input.cpp`). The game reads
   no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).
   `re/remote/to_continue.sh` drives a full run into the last Sandbox save, `re/remote/to_menu.sh` stops at the main
-  menu, and `re/remote/vehicle.sh <name> jeep|heli` takes direct control of a response facility's jeep or helicopter
-  (switching the mod off live while it clicks through the menus, so the UI is in the screenshots), and
+  menu, and `re/remote/vehicle.sh <name> jeep|heli [x,y]` takes direct control of a response facility's jeep or
+  helicopter (switching the mod off live while it clicks through the menus, so the UI is in the screenshots; the
+  facility is looked for in the view or given as x,y, `HERE=1` uses the park the game is already in), and
   `re/remote/reload.sh <name>` leaves the park to the main menu and loads it again. `JWE3VR_hud.req` saves the HUD texture
   (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
   target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).

@@ -25,9 +25,9 @@ ID3D12Device* Device();
 ID3D12CommandQueue* GameQueue();
 // The backbuffer the game's next Present will show (AddRef'd; caller releases). Null before the first Present.
 ID3D12Resource* NextBackbuffer();
-// Blocks (up to 2 s) until our copies submitted so far have finished on the GPU (before destroying swapchain
+// Blocks (up to timeoutMs) until our copies submitted so far have finished on the GPU (before destroying swapchain
 // images or upload/readback buffers). False = still running: callers must not free what those copies use.
-bool WaitCopies();
+bool WaitCopies(unsigned timeoutMs = 2000);
 
 // Debug BMPs: can texels of this format be decoded, and write a readback buffer holding one texture copy
 // (footprint `fp`, decoded as `format`) as <file> next to the DLL.

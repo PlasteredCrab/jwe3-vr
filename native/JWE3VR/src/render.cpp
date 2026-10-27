@@ -73,6 +73,10 @@ static MapFn o_Map;
 
 static ID3D12Device* g_device = nullptr;
 static std::atomic<ID3D12CommandQueue*> g_lastDirect{nullptr};
+// The direct queue this thread submitted to last: on the thread that presents, the queue of the frame's final work
+// (the composite and the copy into the backbuffer), a better guess for the present queue than the last direct
+// queue of any thread (JWE3 also submits direct work from other threads).
+static thread_local ID3D12CommandQueue* t_lastDirect = nullptr;
 static ID3D12CommandQueue* g_queue = nullptr;
 static bool g_xrTried = false;
 static thread_local bool t_inPresent = false;
@@ -184,12 +188,19 @@ void RecordCopy(ID3D12GraphicsCommandList* list, ID3D12Resource* src, D3D12_RESO
     list->ResourceBarrier(srcNeedsBarrier ? 2 : 1, srcNeedsBarrier ? post : post + 1);
 }
 
-bool WaitCopies() {
+bool WaitCopies(unsigned timeoutMs) {
     std::lock_guard<std::mutex> l(g_copyLock);
     if (!g_fence || g_fence->GetCompletedValue() >= g_fenceValue) return true;
     g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-    WaitForSingleObject(g_fenceEvent, 2000);
+    WaitForSingleObject(g_fenceEvent, timeoutMs);
     return g_fence->GetCompletedValue() >= g_fenceValue;
+}
+
+// Our copy fence: completed value and the last value signalled (diagnostics).
+static void CopyFenceState(UINT64& completed, UINT64& signalled) {
+    std::lock_guard<std::mutex> l(g_copyLock);
+    completed = g_fence ? g_fence->GetCompletedValue() : 0;
+    signalled = g_fenceValue;
 }
 
 ID3D12Resource* NextBackbuffer() {
@@ -446,9 +457,14 @@ static bool DebugDump(ID3D12Resource* res, D3D12_RESOURCE_STATES state, const wc
         b = Transition(res, D3D12_RESOURCE_STATE_COPY_SOURCE, state);
         l->ResourceBarrier(1, &b);
     });
-    if (!submitted || !WaitCopies()) {
+    // A debug dump may wait longer than a frame's copies: at 1-2 fps over remote desktop the GPU can run more than
+    // 2 s behind (seen: every dump of a run "busy" after the first timed out).
+    if (!submitted || !WaitCopies(15000)) {
         // Not copied, or the GPU has not finished: keep both alive (leak) rather than free memory in use.
-        LOGW("debug: dump skipped (copy queue busy)");
+        UINT64 completed = 0, signalled = 0;
+        CopyFenceState(completed, signalled);
+        LOGW("debug: dump skipped (copy queue busy: %s, copy fence %llu of %llu on queue %p)",
+             submitted ? "not finished in 15 s" : "not submitted", completed, signalled, g_queue);
         inFlight = submitted;
         return false;
     }
@@ -498,10 +514,13 @@ static void OnPresent(IDXGISwapChain* sc) {
     if (!g_queue) {
         g_queue = g_swapQueue.load();
         if (!g_queue) {
-            // The swapchain predates our hooks: fall back to the last direct queue the game submitted to.
-            g_queue = g_lastDirect.load();
+            // The swapchain predates our hooks: fall back to the direct queue this (the presenting) thread submitted
+            // to last, else the last direct queue of any thread.
+            ID3D12CommandQueue* any = g_lastDirect.load();
+            g_queue = t_lastDirect ? t_lastDirect : any;
             if (!g_queue) return;
-            LOGW("game swapchain queue not seen; using the last direct queue %p", g_queue);
+            LOGW("game swapchain queue not seen; using the %s direct queue %p (last of any thread: %p)",
+                 t_lastDirect ? "presenting thread's last" : "last", g_queue, any);
         }
         LOGI("game present queue %p, device %p", g_queue, g_device);
     }
@@ -703,7 +722,7 @@ static HRESULT STDMETHODCALLTYPE Hk_Resize(IDXGISwapChain* sc, UINT n, UINT w, U
 
 static void STDMETHODCALLTYPE Hk_Execute(ID3D12CommandQueue* q, UINT n, ID3D12CommandList* const* lists) {
     D3D12_COMMAND_QUEUE_DESC d = q->GetDesc();
-    if (d.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) g_lastDirect = q;
+    if (d.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) g_lastDirect = q, t_lastDirect = q;
     if (q == g_queue && viewcb::OnExecute(q, n, lists, o_Execute)) return;
     o_Execute(q, n, lists);
 }

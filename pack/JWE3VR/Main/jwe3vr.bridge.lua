@@ -27,6 +27,11 @@ local kPath = ".\\Win64\\ovldata\\JWE3VR\\JWE3VR.dll"
 
 local vr = nil
 local bTried = false
+-- Text sent before the DLL is loaded in this VM (the camera manager ticks during park loading, before the VR
+-- manager's Init loads it): kept and written once it loads, so early lines are not lost (seen in game: the camera
+-- path's first lines were missing from the log, which looked like the path never ran).
+local tEarlyText = {}
+local kEarlyTextMax = 32
 
 Bridge.Load = function()
     if vr then return true end
@@ -48,6 +53,9 @@ Bridge.Load = function()
     end
     vr = fn
     api.debug.Trace("JWE3VR: bridge loaded")
+    local tEarly = tEarlyText
+    tEarlyText = {}
+    for _, s in global.ipairs(tEarly) do Bridge.Text("(before the bridge loaded) " .. s) end
     return true
 end
 
@@ -128,8 +136,11 @@ end
 
 -- Text into JWE3VR.log (errors, module names): sent as character codes, 30 per call (op 17).
 Bridge.Text = function(s)
-    if not vr then return end
     s = tostring(s)
+    if not vr then
+        if #tEarlyText < kEarlyTextMax then tEarlyText[#tEarlyText + 1] = s end
+        return
+    end
     local n = #s
     local i = 1
     repeat

@@ -110,23 +110,6 @@ Hooks.tPatches = {
     end,
 }
 
--- Camera mode modules (CameraModeManager tModeAPIs, JWE3 build 1792088119): the mode Advance is looked up
--- every frame, so this patch works however late it lands (see JWE3VR.Camera.PatchMode).
-local tCameraModes = {
-    Debug = "CombinedDebugCamera", Focus = "FocusCamera", Orbit = "OrbitCamera", Standard = "StandardCamera",
-    FirstPersonVehicle = "FirstPersonVehicleCamera", ThirdPersonVehicle = "ThirdPersonVehicleCamera",
-    Gunner = "GunnerCamera", MatchTarget = "MatchTargetCamera", Animated = "AnimatedCamera", Map = "MapCamera",
-    Photo = "PhotoCamera", Fixed = "FixedCamera", FirstPerson = "FirstPersonCamera", Capture = "CaptureCamera",
-    VehicleLockOn = "VehicleLockOnCamera", HatcheryExit = "HatcheryExitCamera", Guest = "GuestCamera",
-    Panoramic = "PanoramicCamera", Dolly = "DollyCamera", Path = "PathCamera", Freelook = "FreelookCamera",
-    NestExit = "NestExitCamera", MapGenerator = "MapGeneratorCamera",
-}
-for sMode, sFile in pairs(tCameraModes) do
-    Hooks.tPatches["Components.Cameras." .. sFile] = function(tModule)
-        global.require("JWE3VR.Camera").PatchMode(tModule, sMode)
-    end
-end
-
 Hooks.tByKey = {}
 for sName, fn in pairs(Hooks.tPatches) do
     Hooks.tByKey[string.lower(sName)] = {sName = sName, fn = fn, nMilestone = tMilestones[sName]}

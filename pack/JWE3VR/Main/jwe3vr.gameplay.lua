@@ -160,9 +160,7 @@ local AdaptSign = function(t, axis, nErr, nCmd)
 end
 
 Gameplay.GunnerAim = function()
-    local tModeData = Camera.tModeData
-    local _, nGunner = Gameplay.GunnerIDs()
-    local gunnerID = (tModeData and tModeData.gunnerID) or nGunner
+    local _, gunnerID = Gameplay.GunnerIDs()
     if not gunnerID then return 0, 0, false end
     local WeaponsAPI = api.world.GetWorldAPIs().weapons
     -- Measure both directions in the vehicle body's frame: a frame that turned with the turret would

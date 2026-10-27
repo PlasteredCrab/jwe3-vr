@@ -75,14 +75,12 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
                         tostring(co ~= nil and not bMain) .. ", startup globals visible " .. tostring(global.__JWE3VR_StartupToken))
         end)
     end
-    -- Drive the camera from here when no camera wrapper ever runs (JWE3: camera component out of reach).
+    -- The camera rig: skipped here while the camera manager's own Advance ticks it (Camera.OnManagerAdvance).
     local Camera = require("JWE3VR.Camera")
-    if not Camera.bModeDriven and not Camera.bManagerDriven then
-        local bOk, sErr = pcall(Camera.ManagerTick, _nUnscaledDeltaTime)
-        if not bOk and not self.bManagerCameraError then
-            self.bManagerCameraError = true
-            Bridge.Text("camera (manager path) failed: " .. tostring(sErr))
-        end
+    local bOkCam, sCamErr = pcall(Camera.ManagerTick, _nUnscaledDeltaTime)
+    if not bOkCam and not self.bManagerCameraError then
+        self.bManagerCameraError = true
+        Bridge.Text("camera (manager path) failed: " .. tostring(sCamErr))
     end
     self.nDiagFrames = (self.nDiagFrames or 0) + 1 -- frames, not time: a paused park passes dt 0
     if not self.bCameraDiag and self.nDiagFrames > 300 then
@@ -93,8 +91,8 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
             local cmm = bW and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
             local sCmm = global.type(cmm)
             local sEntities = sCmm == "table" and global.type(global.rawget(cmm, "tEntities")) or "n/a"
-            Bridge.Text("camera diag: mode Advance calls " .. tostring(Camera.nModeCalls or 0) .. ", last skip " ..
-                        tostring(Camera.sSkip) .. ", driven " .. tostring(Camera.bModeDriven) .. ", mode " ..
+            Bridge.Text("camera diag: driven via " .. tostring(Camera.sDrivenVia or "the VR manager") .. " (" ..
+                        tostring(Camera.nInstanceTicks) .. " camera-manager ticks), mode " ..
                         tostring(Camera.sMode) .. "; world CameraModeManager is " .. sCmm .. ", tEntities " .. sEntities ..
                         "; manager-path ticks " .. tostring(Camera.nTicks or 0) .. ", of which read back our own write " ..
                         tostring(Camera.nOwnReads or 0))

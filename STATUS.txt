@@ -1,6 +1,39 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.14  One camera path; helicopter gun seat; test tooling fixes (remote runs 69-78, headset not worn)
+    - One camera path: the rig runs right after the camera manager's own Advance, through a patch of the
+      CameraModeManager module (runs 72-78: "driven via module patch", 1233-1889 ticks per park), with a wrapper on
+      an instance made before the patch and the VR manager as the fallback. The camera-mode wrappers and their
+      separate copy of the rig logic are gone; camera shake is now switched off once per camera manager (that was
+      only in the mode path).
+    - Seen on the frame with IPDScale 40 (eyes 2.6 m apart in a seat): the eye left the cockpit (pilot seat: down by
+      the landing gear) and the gun mount (one eye outside the helicopter, the other deep in the cabin); at 1.0 it is
+      back in the seat / at the mount. Overview: two eye positions far apart. So the rig reaches the frame in the
+      park overview, the helicopter's pilot seat and its gun seat (run 72 overview, run 78 seats).
+    - Helicopter (run 78): DIRECT CONTROL -> seat camera asked for on try 1 -> FirstPersonVehicle, rig kind 3;
+      pad RT takes off, Y (only in the air) -> gun seat, rig kind 4 at the mount; B -> pilot seat (seat camera
+      asked again, try 1); B -> park overview, rig kind 1. The seat-camera request is for helicopters only, at most
+      5 tries per stay in the chase camera, reset once seated. Gun-seat aiming takes the gunner and vehicle IDs from
+      the gun-seat UI mode itself.
+    - Log fix: Bridge.Text dropped lines sent before the bridge DLL was loaded in that Lua VM. The camera manager
+      first ticks while the park loads, so the "driven via module patch" line was lost and runs 70-72 looked as if
+      only the VR manager drove the camera; the 0.0.9-0.0.13 notes on which wrapper runs in which park rest on that
+      and are not reliable. Early lines are now kept (up to 32) and written, marked "(before the bridge loaded)",
+      once it loads; "driven from the VR manager" is logged only on that path.
+    - Debug screenshots: at 1-2 fps over remote desktop the GPU can run more than 2 s behind, and from the first
+      time-out every dump of run 74 was "copy queue busy". Dumps now wait up to 15 s and log the copy fence when they
+      fail; without version.dll the present queue is the presenting thread's last direct queue (was: the last of
+      any thread; the same queue in run 75). Runs 75-78: no skipped dump.
+    - vehicle.sh: the park camera is saved with the park, and selecting things moves it; it also moves to its saved
+      place a while after the park appears. Run 75 screenshotted bare grass, found no facility and, as the script
+      then did, built a second response facility in the Sandbox park (still standing, away from the first). The
+      script builds nothing now: it waits for the camera to settle, looks for the facility in the view (or takes
+      x,y), and stops if the panel does not open; HERE=1 reuses the park the game is in.
+    - Not seen: anything in the headset. In the gun seat the gunner's own model is right at the eye (head and cap in
+      view with the headset at rest beside the mount); worn and recentred, the eye may sit inside the gunner's head.
+      Hiding that model is still to do.
+
 2026-10-27  0.0.13  Leaving a park and loading it again (remote runs 66-68, headset not worn)
     - New re/remote/reload.sh: park, pause menu (pad START), EXIT TO MAIN MENU, OK, CONTINUE, then the second park's
       log lines and a frame / HUD pair; every click is gated on a screenshot check.
