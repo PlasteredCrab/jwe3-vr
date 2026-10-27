@@ -212,6 +212,12 @@ TickOutput Tick(const TickInput& in) {
         eye = (int)(g_tick & 1) ^ (cfg.swapEyes ? 1 : 0);
         Pose e = g_snap.eye[eye].pose;
         e.p = local.p + (e.p - local.p) * cfg.ipdScale;
+        // The tick a new IPD scale first applies (pairs with JWE3VR_aer.req to check the present lag in game).
+        static float s_lastIpd = -1.f;
+        if (cfg.ipdScale != s_lastIpd) {
+            if (s_lastIpd >= 0.f) LOGI("rig: IPD scale %.1f from tick %llu (eye %d)", cfg.ipdScale, (unsigned long long)g_tick, eye);
+            s_lastIpd = cfg.ipdScale;
+        }
         local = e;
         stage = Compose(g_recenter, e);
     }

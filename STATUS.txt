@@ -6,8 +6,10 @@ JWE3 VR - status log (newest first)
       rig tick each is paired with. Run with IPDScale = 20 (eyes ~38 m apart at the 1:30 park scale) in the park:
       consecutive ticks 89..96, eyes 1,0,1,0,..., no repeat or drop. Every frame labelled eye 0 is shifted 13 px right
       of the eye 1 frames (phase correlation; the facility sits ~40 px further right) - the left eye's view, so the
-      defaults (AERPresentLag 1, SwapEyes 0) pair each image with its own eye. Not checkable this way: a lag off by
-      two frames (same eye) - that needs a moving camera.
+      defaults (AERPresentLag 1, SwapEyes 0) pair each image with its own eye.
+    - Lag checked exactly (run 58): IPDScale switched 1 -> 40 during a dump; the rig logs the first tick it applies to
+      ("rig: IPD scale 40.0 from tick 59"), and the first frame with the wide separation is the present paired with
+      tick 59 (present 4, tick 58: unchanged). Each presented image is the one rendered from its paired tick.
 
 2026-10-27  0.0.9  The rig really drives the frame; the virtual pad reaches JWE3; gun seat (runs 47-56, headset not worn)
     - Correction to 0.0.4-0.0.8: the rig's camera transform never reached the rendered frame, only its FOV. The game's
