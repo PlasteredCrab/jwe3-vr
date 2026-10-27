@@ -137,7 +137,7 @@ D3D12_RESOURCE_BARRIER Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES from,
     return b;
 }
 
-bool Submit(const std::function<void(ID3D12GraphicsCommandList*)>& record) {
+bool Submit(const std::function<void(ID3D12GraphicsCommandList*)>& record, UINT64* fence) {
     if (!g_queue) return false;
     std::lock_guard<std::mutex> l(g_copyLock);
     if (!InitCopy()) return false;
@@ -161,6 +161,7 @@ bool Submit(const std::function<void(ID3D12GraphicsCommandList*)>& record) {
     o_Execute(g_queue, 1, lists);
     s.fenceValue = ++g_fenceValue;
     g_queue->Signal(g_fence, s.fenceValue);
+    if (fence) *fence = s.fenceValue;
     return true;
 }
 
@@ -196,11 +197,9 @@ bool WaitCopies(unsigned timeoutMs) {
     return g_fence->GetCompletedValue() >= g_fenceValue;
 }
 
-// Our copy fence: completed value and the last value signalled (diagnostics).
-static void CopyFenceState(UINT64& completed, UINT64& signalled) {
+static UINT64 CopyFenceCompleted() {
     std::lock_guard<std::mutex> l(g_copyLock);
-    completed = g_fence ? g_fence->GetCompletedValue() : 0;
-    signalled = g_fenceValue;
+    return g_fence ? g_fence->GetCompletedValue() : 0;
 }
 
 ID3D12Resource* NextBackbuffer() {
@@ -422,8 +421,50 @@ bool SaveReadbackBmp(ID3D12Resource* rb, const D3D12_PLACED_SUBRESOURCE_FOOTPRIN
     return ok;
 }
 
-// Copies one texture (in state `state`) to the CPU and writes it as <file> next to the DLL. inFlight = the GPU
-// had not finished the copy: the caller must then keep `res` alive (it is not released here either way).
+// Debug dumps are saved on a later frame, once the GPU has done the copy: waiting for it inside Present stalled
+// whole runs (run 86: every dump's copy stayed two submissions behind until the 15 s wait gave up - the queue's
+// work waits on the frame the game records after this Present, which a wait here holds up).
+struct PendingDump {
+    ID3D12Resource* readback;
+    ID3D12Resource* source; // kept alive until the copy is done
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp;
+    DXGI_FORMAT format;
+    UINT w, h;
+    std::wstring file;
+    UINT64 fence;
+    ULONGLONG since;
+};
+static std::vector<PendingDump> g_pendingDumps; // render thread only
+constexpr ULONGLONG kDumpGiveUpMs = 30000;
+
+// Saves the dumps whose copies have finished (each Present).
+static void PollDumps() {
+    if (g_pendingDumps.empty()) return;
+    UINT64 done = CopyFenceCompleted();
+    ULONGLONG now = GetTickCount64();
+    for (size_t i = 0; i < g_pendingDumps.size();) {
+        PendingDump& p = g_pendingDumps[i];
+        if (done >= p.fence) {
+            bool ok = SaveReadbackBmp(p.readback, p.fp, p.format, p.w, p.h, p.file.c_str());
+            if (ok) LOGI("debug: %ls %ux%u saved (%llu ms after the request); %s", p.file.c_str(), p.w, p.h, now - p.since,
+                         input::DebugSummary().c_str());
+            else LOGW("debug: %ls failed (format %d)", p.file.c_str(), (int)p.format);
+            p.readback->Release();
+            p.source->Release();
+        } else if (now - p.since > kDumpGiveUpMs) {
+            // Never finished: keep both alive (leak) rather than free memory the GPU may still use.
+            LOGW("debug: %ls dropped (copy not finished in 30 s; copy fence %llu of %llu on queue %p)", p.file.c_str(), done,
+                 p.fence, g_queue);
+        } else {
+            ++i;
+            continue;
+        }
+        g_pendingDumps.erase(g_pendingDumps.begin() + i);
+    }
+}
+
+// Copies one texture (in state `state`) to the CPU and writes it as <file> next to the DLL once the copy is done
+// (PollDumps). inFlight is always false: the dump keeps its own reference to `res`, so callers release theirs.
 static bool DebugDump(ID3D12Resource* res, D3D12_RESOURCE_STATES state, const wchar_t* file, bool& inFlight) {
     inFlight = false;
     if (!res) return false;
@@ -447,6 +488,7 @@ static bool DebugDump(ID3D12Resource* res, D3D12_RESOURCE_STATES state, const wc
         LOGW("debug: readback buffer failed");
         return false;
     }
+    UINT64 fence = 0;
     bool submitted = Submit([&](ID3D12GraphicsCommandList* l) {
         D3D12_RESOURCE_BARRIER b = Transition(res, state, D3D12_RESOURCE_STATE_COPY_SOURCE);
         l->ResourceBarrier(1, &b);
@@ -456,23 +498,15 @@ static bool DebugDump(ID3D12Resource* res, D3D12_RESOURCE_STATES state, const wc
         l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         b = Transition(res, D3D12_RESOURCE_STATE_COPY_SOURCE, state);
         l->ResourceBarrier(1, &b);
-    });
-    // A debug dump may wait longer than a frame's copies: at 1-2 fps over remote desktop the GPU can run more than
-    // 2 s behind (seen: every dump of a run "busy" after the first timed out).
-    if (!submitted || !WaitCopies(15000)) {
-        // Not copied, or the GPU has not finished: keep both alive (leak) rather than free memory in use.
-        UINT64 completed = 0, signalled = 0;
-        CopyFenceState(completed, signalled);
-        LOGW("debug: dump skipped (copy queue busy: %s, copy fence %llu of %llu on queue %p)",
-             submitted ? "not finished in 15 s" : "not submitted", completed, signalled, g_queue);
-        inFlight = submitted;
+    }, &fence);
+    if (!submitted) {
+        LOGW("debug: %ls skipped (copy queue stalled)", file);
+        rb->Release(); // never submitted: the GPU does not know it
         return false;
     }
-    bool ok = SaveReadbackBmp(rb, fp, d.Format, (UINT)d.Width, d.Height, file);
-    rb->Release();
-    if (ok) LOGI("debug: %ls %ux%u saved; %s", file, (UINT)d.Width, d.Height, input::DebugSummary().c_str());
-    else LOGW("debug: %ls failed (format %d)", file, (int)d.Format);
-    return ok;
+    res->AddRef();
+    g_pendingDumps.push_back({rb, res, fp, d.Format, (UINT)d.Width, d.Height, file, fence, GetTickCount64()});
+    return true;
 }
 
 static void DebugScreenshot() {
@@ -526,6 +560,7 @@ static void OnPresent(IDXGISwapChain* sc) {
     }
     if (!g_swap) sc->QueryInterface(IID_PPV_ARGS(&g_swap));
     input::DebugTick();
+    PollDumps();
     ULONGLONG now = GetTickCount64();
     if (now - g_lastConfigCheck > 1000) {
         g_lastConfigCheck = now;

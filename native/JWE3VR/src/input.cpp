@@ -46,7 +46,9 @@ static Override g_override;
 
 static bool g_turnLatched = false;
 static ULONGLONG g_lastFrame = 0;
-static bool g_mouseDown[2]{};
+static std::atomic<bool> g_mouseDown[2]{};
+// The laser's cursor in client pixels, packed as a mouse-message lParam (-1: none yet).
+static std::atomic<LPARAM> g_cursorPt{-1};
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -60,6 +62,9 @@ static BYTE Trig(float v) { return (BYTE)std::clamp(v * 255.f, 0.f, 255.f); }
 //                       CLICK=x,y (left click at x,y as fractions of the client area, down then up)
 //     FOCUS             post the window-activation messages (the game ignores input while it thinks it is
 //                       in the background; real focus is not changed)
+//     LASER=x,y         the VR laser's own mouse path: cursor to x,y (fractions), left press at the start and
+//                       release at the end (tests what the trigger does with no controllers). Like CLICK, send it
+//                       twice: the first press arrives with the move, before the UI knows the cursor is there
 //     '-'               nothing
 // The file is consumed when read. Steps advance on the render thread (DebugTick), so the script runs even when
 // the game does not poll pad 0; while it runs pad 0 reports itself connected. Keys and clicks are posted to the
@@ -68,6 +73,7 @@ struct PadStep {
     XINPUT_GAMEPAD pad{};
     std::vector<WPARAM> keys;
     float clickX = -1, clickY = -1;
+    float laserX = -1, laserY = -1;
     bool focus = false;
     ULONGLONG ms = 0;
 };
@@ -113,6 +119,7 @@ static bool ParsePadStep(const std::string& line, PadStep& s) {
         if (sscanf_s(t.c_str(), "RX=%f", &v) == 1) s.pad.sThumbRX = Axis(v), known = true;
         if (sscanf_s(t.c_str(), "RY=%f", &v) == 1) s.pad.sThumbRY = Axis(v), known = true;
         if (sscanf_s(t.c_str(), "CLICK=%f,%f", &v, &w) == 2) s.clickX = v, s.clickY = w, known = true;
+        if (sscanf_s(t.c_str(), "LASER=%f,%f", &v, &w) == 2) s.laserX = v, s.laserY = w, known = true;
         if (t == "FOCUS") s.focus = true, known = true;
         if (!known) return false;
     }
@@ -134,6 +141,8 @@ static LPARAM ClientPoint(float fx, float fy) {
     return MAKELPARAM(x, y);
 }
 
+static void CursorToUV(float u, float v);
+
 // Window messages of a step: at its start (down) and at its end (up). Caller holds g_lock.
 static void StepMessages(const PadStep& s, bool start) {
     if (!g_hwnd) return;
@@ -152,6 +161,10 @@ static void StepMessages(const PadStep& s, bool start) {
         } else {
             PostMessageW(g_hwnd, WM_LBUTTONUP, 0, pt);
         }
+    }
+    if (s.laserX >= 0) {
+        if (start) CursorToUV(s.laserX, s.laserY);
+        MouseButton(0, start);
     }
 }
 
@@ -353,47 +366,44 @@ void SetPadOverride(uint32_t mask, float lx, float ly, float rx, float ry, float
     g_override = {mask, lx, ly, rx, ry, lt, rt, buttons, GetTickCount64()};
 }
 
-// Simulated clicks and cursor moves only while the game has focus (SteamVR or a browser can take it).
-static bool GameFocused() {
-    if (!g_hwnd) return false;
-    HWND fg = GetForegroundWindow();
-    return fg && (fg == g_hwnd || fg == GetAncestor(g_hwnd, GA_ROOT));
-}
+// The laser's mouse: messages posted to the game's own window (cursor moves, button presses at the laser point),
+// never OS-level input - no SendInput or SetCursorPos, so nothing reaches other windows and the real cursor stays
+// where it is. JWE3 takes its UI cursor and clicks from these (run 87, LASER=: the move lit a toolbar button and its
+// tooltip, and clicks opened the guest-camera dropper and dropped the guest). A press counts only after the UI has
+// seen the cursor there on an earlier frame - in VR the cursor moves every frame before the trigger is pulled.
+static WPARAM MouseKeys() { return (g_mouseDown[0] ? MK_LBUTTON : 0) | (g_mouseDown[1] ? MK_RBUTTON : 0); }
 
-static void SendMouse(DWORD flags, int wheel = 0) {
-    INPUT in{};
-    in.type = INPUT_MOUSE;
-    in.mi.dwFlags = flags;
-    in.mi.mouseData = (DWORD)wheel;
-    SendInput(1, &in, sizeof(in));
+static void PostMouse(UINT msg) {
+    LPARAM pt = g_cursorPt.load();
+    if (!g_hwnd || pt == -1) return;
+    PostMessageW(g_hwnd, msg, MouseKeys(), pt);
 }
 
 void MouseButton(int button, bool down) {
     button &= 1;
     if (g_mouseDown[button] == down) return;
-    if (down && !GameFocused()) return; // a release always goes out, a press only into the game
+    if (down && g_cursorPt.load() == -1) return; // no laser point yet
     g_mouseDown[button] = down;
-    if (button == 0) SendMouse(down ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP);
-    else SendMouse(down ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP);
+    if (button == 0) PostMouse(down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
+    else PostMouse(down ? WM_RBUTTONDOWN : WM_RBUTTONUP);
+    JVR_LOG_ONCE("laser: first %s press posted to the game window", button == 0 ? "left" : "right");
 }
 
+// A key press and release posted to the game window (JWE3 ignores posted keys in its menus; kept for the bridge op).
 void KeyTap(WORD vk) {
-    if (!GameFocused()) return;
-    INPUT in[2]{};
-    in[0].type = in[1].type = INPUT_KEYBOARD;
-    in[0].ki.wVk = in[1].ki.wVk = vk;
-    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(2, in, sizeof(INPUT));
+    if (!g_hwnd) return;
+    PostMessageW(g_hwnd, WM_KEYDOWN, vk, KeyLParam(vk, false));
+    PostMessageW(g_hwnd, WM_KEYUP, vk, KeyLParam(vk, true));
 }
 
-// Moves the OS cursor to a UV position of the game window's client area.
+// Moves the laser's cursor to a UV position of the game window's client area (a posted WM_MOUSEMOVE).
 static void CursorToUV(float u, float v) {
-    if (!GameFocused()) return;
     RECT rc;
-    if (!GetClientRect(g_hwnd, &rc)) return;
-    POINT p{(LONG)(std::clamp(u, 0.f, 1.f) * (rc.right - 1)), (LONG)(std::clamp(v, 0.f, 1.f) * (rc.bottom - 1))};
-    ClientToScreen(g_hwnd, &p);
-    SetCursorPos(p.x, p.y);
+    if (!g_hwnd || !GetClientRect(g_hwnd, &rc)) return;
+    int x = (int)(std::clamp(u, 0.f, 1.f) * (rc.right - 1)), y = (int)(std::clamp(v, 0.f, 1.f) * (rc.bottom - 1));
+    LPARAM pt = MAKELPARAM(x, y);
+    if (g_cursorPt.exchange(pt) == pt) return;
+    PostMouse(WM_MOUSEMOVE);
 }
 
 static void SmoothCursor(float u, float v, float dt) {

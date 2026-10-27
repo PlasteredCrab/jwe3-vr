@@ -335,13 +335,20 @@ Gameplay.Advance = function(_nDt)
         local bHeld = Has(nBits, secondaryDom)
         Gameplay.nBHeld = bHeld and (Gameplay.nBHeld or 0) + (_nDt or 0) or 0
         if Gameplay.nBHeld > 0.8 and not Gameplay.bEscSent then
-            Gameplay.bEscSent = true
-            Bridge.Key(0x1B) -- Escape: leave the First Person View
+            -- Leave the First Person View with the game's own pad B (seen in game, run 85: pad B leaves the guest
+            -- view), not a synthetic Escape key: the mod sends no OS-level input. A pulse of at least 0.25 s and
+            -- 3 game ticks, so a slow frame cannot swallow it.
+            Gameplay.bEscSent, Gameplay.nBackPulse, Gameplay.nBackTicks = true, 0.25, 3
         elseif not bHeld then
             Gameplay.bEscSent = false
         end
         nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
         nButtons = nButtons & ~XI.B
+        if (Gameplay.nBackPulse or 0) > 0 or (Gameplay.nBackTicks or 0) > 0 then
+            nButtons = nButtons | XI.B
+            Gameplay.nBackPulse = (Gameplay.nBackPulse or 0) - (_nDt or 0)
+            Gameplay.nBackTicks = (Gameplay.nBackTicks or 0) - 1
+        end
         if Ranger.nTool == Ranger.Tool.Radio then nButtons = nButtons & ~XI.A end
         nMask = nMask + Ov.Buttons
     elseif nKind == K.Seat then

@@ -85,7 +85,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Everywhere | Menu button | Pause (hold off-hand grip: Back) |
 | Park, walking | Off-hand B/Y | Tablet: the game screen with its HUD in front of you |
 | Jeep / helicopter seat, gun seat | Off-hand grip + off-hand B/Y | Tablet (plain off-hand Y belongs to the game there) |
-| Flat screen, tablet; in-world HUD in the park overview | Point with dominant hand | Moves the cursor |
+| Flat screen, tablet; in-world HUD in the park overview | Point with dominant hand | Moves the game's cursor (your real mouse cursor stays put) |
 | Flat screen, tablet; in-world HUD in the park overview | Dominant trigger / grip | Left click / right click |
 | Park overview | Dominant laser + trigger | Pick, build, select (the dot shows where) |
 | Park overview | One grip | Drag the park |
@@ -96,7 +96,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Walking | Left stick | Walk where you look |
 | Walking | Right stick | Snap turn (30 degrees; smooth with `SnapTurnDeg = 0`) |
 | Walking | Tap dominant B | Cycle tool: empty hands, dart rifle, medicine gun, radio (stronger pulse per step) |
-| Walking | Hold dominant B | Leave the first-person view (sends Escape) |
+| Walking | Hold dominant B | Leave the first-person view (the game's pad B) |
 | Walking, dart rifle | Dominant trigger | Fire at what the dot is on (reloads in 1.2 s); after the game's dart estimate the dinosaur goes down |
 | Walking, medicine gun | Dominant trigger | Fire at a sick dinosaur; cures its disease after the game's dart estimate (a weak buzz means nothing to treat) |
 | Walking, radio | Dominant trigger on a vehicle | Take control of it |
@@ -246,8 +246,9 @@ The file is written with comments on first run. The ones you are most likely to 
 - **Vehicles ignore the controllers:** JWE3 adopts a pad only after it sees a keystroke from it; look for "virtual
   pad: announced on XInput slot 0" and, in `JWE3VR_shot.req` lines, XInputGetState calls on slot 0.
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
-  `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), `FOCUS`, keys and pad buttons (format in `input.cpp`). The game reads
-  no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).
+  `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), the VR laser's own click path (`LASER=x,y`), `FOCUS`, keys and pad
+  buttons (format in `input.cpp`). The game reads no XInput on its menus and ignores posted keys; clicks register
+  only while it has focus (add `FOCUS`), and only once the UI has seen the cursor there (send a click twice).
   `re/remote/to_continue.sh` drives a full run into the last Sandbox save, `re/remote/to_menu.sh` stops at the main
   menu, and `re/remote/vehicle.sh <name> jeep|heli [x,y]` takes direct control of a response facility's jeep or
   helicopter (switching the mod off live while it clicks through the menus, so the UI is in the screenshots; the
@@ -284,7 +285,7 @@ The file is written with comments on first run. The ones you are most likely to 
 | `native/JWE3VR/src/render.*` | Present hook: backbuffer -> eye / screen / HUD swapchains, xrEndFrame |
 | `native/JWE3VR/src/passes.*` | Inside the game's passes: foveated rendering, UI capture for the in-world HUD, per-eye TAA |
 | `native/JWE3VR/src/viewcb.*` | View constant buffer discovery and experimental synchronous stereo (frame replay) |
-| `native/JWE3VR/src/input.*` | Virtual Xbox pad (XInput), laser -> mouse cursor, clicks |
+| `native/JWE3VR/src/input.*` | Virtual Xbox pad (XInput), laser -> the game's cursor and clicks (posted window messages, no OS input) |
 | `native/JWE3VR/src/bridge.*` | `jwe3vr_lua`: numbers in/out on the game's Lua stack, no Lua linked, layout self-check |
 | `native/loader` | `version.dll` proxy that loads the mod at game start |
 | `native/JWE3VR/test` | Offline checks (rig math; the bridge against a fake `lua_State`) |

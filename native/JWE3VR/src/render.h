@@ -18,7 +18,8 @@ bool CopyToImage(ID3D12Resource* src, D3D12_RESOURCE_STATES srcState, ID3D12Reso
 // Records the same copy into any command list (dst stays RENDER_TARGET before and after).
 void RecordCopy(ID3D12GraphicsCommandList* list, ID3D12Resource* src, D3D12_RESOURCE_STATES srcState, ID3D12Resource* dst);
 // Records commands with `record` into our own list and executes it on the game's queue.
-bool Submit(const std::function<void(ID3D12GraphicsCommandList*)>& record);
+// fence (optional): the copy fence value that marks this submission done.
+bool Submit(const std::function<void(ID3D12GraphicsCommandList*)>& record, UINT64* fence = nullptr);
 D3D12_RESOURCE_BARRIER Transition(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_RESOURCE_STATES to);
 ID3D12Device* Device();
 

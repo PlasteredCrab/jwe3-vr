@@ -1,6 +1,23 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.17  No OS-level input from the mod; debug dumps no longer stall (remote runs 85-87, headset not worn)
+    - The VR laser moved the real Windows cursor (SetCursorPos) and clicked with SendInput, and holding dominant B
+      while walking sent an Escape key with SendInput. On this Sophos-managed PC that is the riskiest thing the mod
+      did, and SendInput lands in whatever window has focus. Now: the laser's cursor moves and button presses are
+      window messages posted to the game's own window (the real cursor stays where it is), and leaving the walking
+      view pulses the game's own pad B (run 85: pad B leaves the guest view). JWE3VR.dll no longer imports
+      SendInput or SetCursorPos (dumpbin).
+    - Run 87 (new pad-script step LASER=x,y drives exactly the laser's code path): the posted move lit the guest-cam
+      toolbar button and its "FIRST PERSON VIEW" tooltip; a press opened the dropper and a press on the ground
+      started the guest view. A press counts only after the UI has seen the cursor there on an earlier frame (a move
+      and a press in the same instant did nothing) - in VR the cursor moves every frame before the trigger is
+      pulled. Not seen: the real laser and the hold-B pulse with controllers.
+    - Debug dumps (JWE3VR_shot / _hud / _aer.req) are saved on a later frame once the GPU copy is done, instead of
+      waiting inside Present. Run 86 showed the wait could never succeed: every dump's copy stayed exactly two
+      submissions behind until the 15 s timeout (the queue's work waits on the frame the game records after this
+      Present). Run 87: every dump saved, 1.0-1.6 s after its request.
+
 2026-10-27  0.0.16  Walking (the guest view) reached remotely; the game's FOV comes back after VR (runs 83-84)
     - New re/remote/guest.sh: park, the mod off live, the guest-camera button (second from the bottom of the left
       toolbar), "SELECT START LOCATION" checked in the screenshot, a start spot clicked, the mod back on. The
