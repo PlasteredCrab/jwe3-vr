@@ -9,6 +9,9 @@ New-Item -ItemType Directory -Force $out | Out-Null
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+# Compiler and linker temp files next to the build, not in %TEMP%.
+$env:TMP = $env:TEMP = Join-Path $out 'tmp'
+New-Item -ItemType Directory -Force $env:TMP | Out-Null
 
 cmd /c "`"$vcvars`" >nul 2>nul && cl /nologo /std:c++20 /O2 /EHsc /Fo`"$out\\`" /Fe`"$out\math_test.exe`" `"$here\test\math_test.cpp`""
 if ($LASTEXITCODE -ne 0) { throw 'math test build failed' }

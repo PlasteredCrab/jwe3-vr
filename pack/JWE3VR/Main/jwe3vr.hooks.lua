@@ -26,6 +26,18 @@ local Hooks = module(...)
 
 local kManager = "Managers.JWE3VRManager"
 
+-- Milestone codes and text into JWE3VR.log through the bridge (see JWE3VR.Bridge.M / Bridge.Text).
+local Log = function(nCode, a)
+    local bOk, Bridge = pcall(global.require, "JWE3VR.Bridge")
+    if bOk and Bridge then Bridge.Log(nCode, a) end
+end
+
+local Text = function(s)
+    local bOk, Bridge = pcall(global.require, "JWE3VR.Bridge")
+    if bOk and Bridge and Bridge.Text then pcall(Bridge.Text, s) end
+end
+Hooks.Text = Text
+
 local AddManager = function(tModule)
     local tProto = tModule.EnvironmentPrototype
     local tManagers = tProto and tProto.Managers
@@ -35,6 +47,7 @@ local AddManager = function(tModule)
     end
     if tManagers[kManager] == nil then tManagers[kManager] = {} end
     api.debug.Trace("JWE3VR: manager added to the park environment")
+    Text("manager added to " .. tostring(tModule._NAME))
 end
 
 -- Load every environment prototype through our require, so the park environment gets its patch
@@ -45,11 +58,27 @@ local PatchEnvironmentLoader = function(tModule)
         api.debug.Trace("JWE3VR: Environment._MergePrototype not found; the VR manager may be missing")
         return
     end
+    local tSeen = {}
     tModule._MergePrototype = function(_sPrototypeModule, ...)
-        if type(_sPrototypeModule) == "string" then pcall(global.require, _sPrototypeModule) end
+        if type(_sPrototypeModule) == "string" then
+            if not tSeen[_sPrototypeModule] then
+                tSeen[_sPrototypeModule] = true
+                Text("environment prototype " .. _sPrototypeModule)
+            end
+            pcall(global.require, _sPrototypeModule)
+        end
         return fnMerge(_sPrototypeModule, ...)
     end
 end
+
+-- Canonical module name -> bridge milestone logged once its patch has run (JWE3VR.Bridge.M).
+local tMilestones = {
+    ["Environment.Environment"] = 101,
+    ["Environments.ParkEnvironment"] = 102,
+    ["Components.Cameras.CameraModeManager"] = 103,
+    ["Editors.Vehicle.DriveVehicleUIMode"] = 104,
+    ["Editors.Vehicle.VehicleGunnerUIMode"] = 105,
+}
 
 -- Canonical module name -> patch(tModule). Matching is case-insensitive (the game requires modules
 -- in mixed case; the files are lower case).
@@ -70,8 +99,27 @@ Hooks.tPatches = {
     end,
 }
 
+-- Camera mode modules (CameraModeManager tModeAPIs, JWE3 build 1792088119): the mode Advance is looked up
+-- every frame, so this patch works however late it lands (see JWE3VR.Camera.PatchMode).
+local tCameraModes = {
+    Debug = "CombinedDebugCamera", Focus = "FocusCamera", Orbit = "OrbitCamera", Standard = "StandardCamera",
+    FirstPersonVehicle = "FirstPersonVehicleCamera", ThirdPersonVehicle = "ThirdPersonVehicleCamera",
+    Gunner = "GunnerCamera", MatchTarget = "MatchTargetCamera", Animated = "AnimatedCamera", Map = "MapCamera",
+    Photo = "PhotoCamera", Fixed = "FixedCamera", FirstPerson = "FirstPersonCamera", Capture = "CaptureCamera",
+    VehicleLockOn = "VehicleLockOnCamera", HatcheryExit = "HatcheryExitCamera", Guest = "GuestCamera",
+    Panoramic = "PanoramicCamera", Dolly = "DollyCamera", Path = "PathCamera", Freelook = "FreelookCamera",
+    NestExit = "NestExitCamera", MapGenerator = "MapGeneratorCamera",
+}
+for sMode, sFile in pairs(tCameraModes) do
+    Hooks.tPatches["Components.Cameras." .. sFile] = function(tModule)
+        global.require("JWE3VR.Camera").PatchMode(tModule, sMode)
+    end
+end
+
 Hooks.tByKey = {}
-for sName, fn in pairs(Hooks.tPatches) do Hooks.tByKey[string.lower(sName)] = {sName = sName, fn = fn} end
+for sName, fn in pairs(Hooks.tPatches) do
+    Hooks.tByKey[string.lower(sName)] = {sName = sName, fn = fn, nMilestone = tMilestones[sName]}
+end
 Hooks.tDone = {}
 
 local Apply = function(sName, tModule)
@@ -81,7 +129,14 @@ local Apply = function(sName, tModule)
     if not tHook or Hooks.tDone[sKey] then return end
     Hooks.tDone[sKey] = true
     local bOk, sErr = pcall(tHook.fn, tModule)
-    if not bOk then api.debug.Trace("JWE3VR: patching " .. sName .. " failed: " .. tostring(sErr)) end
+    if bOk then
+        if tHook.nMilestone then Log(tHook.nMilestone) end
+        Text("patched " .. sName)
+    else
+        api.debug.Trace("JWE3VR: patching " .. sName .. " failed: " .. tostring(sErr))
+        Log(109, tHook.nMilestone or 0)
+        Text("patching " .. sName .. " failed: " .. tostring(sErr))
+    end
 end
 
 -- Patches every hooked module that is already loaded (walks all of package.loaded).
@@ -110,6 +165,9 @@ local Wrap = function(sGlobal)
     if type(fnOrig) ~= "function" then return end
     global[sGlobal] = function(sName, ...)
         local tModule = fnOrig(sName, ...)
+        if type(sName) == "string" and Hooks.tByKey[string.lower(sName)] and not Hooks.tDone[string.lower(sName)] then
+            Text(sGlobal .. " " .. sName .. " -> " .. type(tModule))
+        end
         Apply(sName, tModule)
         return tModule
     end
@@ -118,8 +176,13 @@ end
 Hooks.Install = function()
     if Hooks.bInstalled then return end
     Hooks.bInstalled = true
+    -- Load JWE3VR.dll now, at game start: this is how the DLL gets into the process when no version.dll
+    -- proxy is installed (deploy.ps1 -NoProxy), and it lets the log confirm the bridge from the menu.
+    local bOk, Bridge = pcall(global.require, "JWE3VR.Bridge")
+    if bOk and Bridge then pcall(Bridge.Load) end
     Wrap("require")
     Wrap("tryrequire")
+    Log(100)
     Hooks.Sweep()
     api.debug.Trace("JWE3VR: hooks installed")
 end

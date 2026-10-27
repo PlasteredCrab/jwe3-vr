@@ -33,7 +33,8 @@ enum Op : int {
     OpLog = 13,        // (code, a, b, c)
     OpPlaceScreen = 14, // ()
     OpHudStatus = 15,  // () -> worldHudActive (the game's UI is being shown as a panel in the world)
-    OpPointer = 16     // (visible, x, y, z)  game-space pointer dot (laser hit / rifle sight)
+    OpPointer = 16,    // (visible, x, y, z)  game-space pointer dot (laser hit / rifle sight)
+    OpLogText = 17     // (final, c1..c30)  text from Lua as character codes; logged with the lua_State when final
 };
 
 constexpr int kProtocol = 1;
@@ -112,12 +113,31 @@ static bool Valid(uint8_t* L, Stack& s) {
     return s.nargs >= 1 && s.nargs <= 32;
 }
 
+// Milestone codes the Lua side reports through OpLog (jwe3vr.bridge.lua Bridge.M), so a run can be
+// followed in JWE3VR.log without the game's own Lua trace.
+static const char* MilestoneName(int code) {
+    switch (code) {
+    case 100: return "hooks installed (require wrapped)";
+    case 101: return "environment loader patched";
+    case 102: return "VR manager added to the park environment";
+    case 103: return "camera manager patched";
+    case 104: return "drive mode patched";
+    case 105: return "gunner mode patched";
+    case 106: return "VR manager Init (park loaded)";
+    case 107: return "camera mode kind (a)";
+    case 108: return "gameplay init done";
+    case 109: return "lua error (a = where)";
+    default: return nullptr;
+    }
+}
+
 static int Dispatch(uint8_t* L) {
     Stack s{};
     if (!Valid(L, s)) {
         JVR_LOG_ONCE("bridge: unexpected Lua stack layout; the Lua side gets no VR data");
         return 0;
     }
+    JVR_LOG_ONCE("bridge: first call from Lua (op %d); stack layout OK", s.Int(1));
     switch ((Op)s.Int(1)) {
     case OpStatus:
         s.Push((float)kProtocol);
@@ -216,8 +236,24 @@ static int Dispatch(uint8_t* L) {
         break;
     }
     case OpLog:
-        LOGI("lua: %d %.3f %.3f %.3f", s.Int(2), s.Num(3), s.Num(4), s.Num(5));
+        if (const char* name = MilestoneName(s.Int(2)))
+            LOGI("lua: %s  a=%.3f b=%.3f c=%.3f", name, s.Num(3), s.Num(4), s.Num(5));
+        else
+            LOGI("lua: %d %.3f %.3f %.3f", s.Int(2), s.Num(3), s.Num(4), s.Num(5));
         break;
+    case OpLogText: {
+        // Lua sends long text in chunks of up to 30 characters; the state pointer tells Lua VMs apart.
+        static thread_local std::string text;
+        for (int i = 3; i <= s.nargs; ++i) {
+            int c = s.Int(i);
+            text.push_back(c >= 32 && c < 127 ? (char)c : '?');
+        }
+        if (s.Int(2) != 0) {
+            LOGI("lua[%p]: %s", (void*)L, text.c_str());
+            text.clear();
+        }
+        break;
+    }
     case OpPlaceScreen:
         xr::PlaceScreen();
         break;

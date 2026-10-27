@@ -240,8 +240,7 @@ static void BuildShadingRateImage(const FrameInfo& f) {
         D3D12_RESOURCE_BARRIER b = render::Transition(sri, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE);
         l->ResourceBarrier(1, &b);
     });
-    render::WaitCopies();
-    upload->Release();
+    if (render::WaitCopies()) upload->Release(); // else leak it: the GPU may still read it
     g_sriFov = f.fovY;
     g_sriAspect = f.aspect;
     g_sriMode = c.foveation;

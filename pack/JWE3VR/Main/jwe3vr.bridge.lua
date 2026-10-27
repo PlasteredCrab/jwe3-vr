@@ -126,6 +126,27 @@ Bridge.Log = function(nCode, a, b, c)
     if vr then vr(Op.Log, nCode, a or 0, b or 0, c or 0) end
 end
 
+-- Text into JWE3VR.log (errors, module names): sent as character codes, 30 per call (op 17).
+Bridge.Text = function(s)
+    if not vr then return end
+    s = tostring(s)
+    local n = #s
+    local i = 1
+    repeat
+        local j = global.math.min(i + 29, n)
+        local t = {17, (j >= n) and 1 or 0}
+        for k = i, j do t[#t + 1] = global.string.byte(s, k) end
+        vr(global.table.unpack(t))
+        i = j + 1
+    until i > n
+end
+
+-- Milestones written to JWE3VR.log (names in bridge.cpp MilestoneName), so a run can be followed
+-- without the game's own Lua trace.
+Bridge.M = {HooksInstalled = 100, EnvLoaderPatched = 101, ManagerAdded = 102, CameraPatched = 103,
+            DrivePatched = 104, GunnerPatched = 105, ManagerInit = 106, CameraKind = 107, GameplayInit = 108,
+            LuaError = 109}
+
 Bridge.PlaceScreen = function()
     if vr then vr(Op.PlaceScreen) end
 end

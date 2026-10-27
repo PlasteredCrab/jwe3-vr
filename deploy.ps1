@@ -4,10 +4,15 @@
 #   <game>\Win64\ovldata\JWE3VR\openxr_loader.dll
 #   <game>\Win64\ovldata\JWE3VR\Manifest.xml, Main.ovl  content pack (the Lua side; no ACSE needed)
 # JWE3VR.ini and JWE3VR.log are created next to JWE3VR.dll on first run (the ini is kept).
+# -NoProxy installs only the content pack: the game's Lua then loads JWE3VR.dll itself (package.loadlib)
+# when content-pack databases run at startup. Use it where endpoint protection flags a version.dll placed
+# next to the exe (a DLL-hijacking pattern). Without the proxy the mod's hooks go in a little later, so
+# the present queue comes from the "last direct queue" fallback.
 # Close the game first (the DLLs are locked while it runs).
-#   powershell -ExecutionPolicy Bypass -File deploy.ps1 [-Build] [-Uninstall] [-Package]
+#   powershell -ExecutionPolicy Bypass -File deploy.ps1 [-Build] [-NoProxy] [-Uninstall] [-Package]
 param(
     [switch]$Build,
+    [switch]$NoProxy,
     [switch]$Uninstall,
     [switch]$Package,
     [string]$GameDir = 'E:\SteamLibrary\steamapps\common\Jurassic World Evolution 3',
@@ -76,7 +81,12 @@ if ($Package) {
 if (-not (Test-Path (Join-Path $GameDir 'JWE3.exe'))) { throw "JWE3.exe not found in $GameDir (use -GameDir)" }
 New-Item -ItemType Directory -Force $packDir | Out-Null
 Copy-Item (Join-Path $dist '*') $packDir -Force
-Copy-Item (Join-Path $bin 'version.dll') $proxy -Force
-Write-Host "installed $proxy"
+if ($NoProxy) {
+    if (Test-Path $proxy) { Remove-Item $proxy; Write-Host "removed $proxy (-NoProxy)" }
+    Write-Host 'no version.dll proxy: the game Lua loads JWE3VR.dll at startup'
+} else {
+    Copy-Item (Join-Path $bin 'version.dll') $proxy -Force
+    Write-Host "installed $proxy"
+}
 Write-Host "installed $packDir (JWE3VR.dll, openxr_loader.dll, Manifest.xml, Main.ovl)"
 Write-Host "settings: $packDir\JWE3VR.ini   log: $packDir\JWE3VR.log"

@@ -19,6 +19,9 @@ foreach ($d in @($out, $obj, $objLoader)) { New-Item -ItemType Directory -Force 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
+# Compiler and linker temp files next to the build, not in %TEMP%.
+$env:TMP = $env:TEMP = Join-Path $out 'tmp'
+New-Item -ItemType Directory -Force $env:TMP | Out-Null
 
 function Invoke-VC([string]$command) {
     cmd /c "`"$vcvars`" >nul && $command"

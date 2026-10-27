@@ -67,32 +67,24 @@ Gameplay.Init = function(_tEnvironment)
 end
 
 ------------------------------------------------------------------------
--- Laser picking: every Lua cursor raycast in the game goes through api.input.GetMouseRay
--- (Helpers.RaycastUtils.GetCursorRaycast, SelectVehicleDestination, build modes...).
+-- Laser picking. JWE3 makes the api tables read-only ("Scripts may NOT modify the API, by design"), so
+-- api.input.GetMouseRay cannot be replaced as on JWE2. Helpers.RaycastUtils.GetCursorRaycast (the cursor
+-- ray behind GetTerrainPositionUnderCursor, GetEntityUnderCursor, ...) is a Lua module function called through
+-- the module table, so the hand ray goes in there; anything that calls GetMouseRay directly follows the OS
+-- cursor, which the laser also drives (input.cpp).
 ------------------------------------------------------------------------
 Gameplay.PatchMouseRay = function()
-    local InputAPI = api.input
-    if not InputAPI or InputAPI.__JWE3VRPatched then return end
-    InputAPI.__JWE3VRPatched = true
-    local fnRay = InputAPI.GetMouseRay
-    local fnRayUnclamped = InputAPI.GetMouseRayUnclamped
-    local HandRay = function()
-        if not Gameplay.bLaser then return nil end
-        local bValid, ox, oy, oz, fx, fy, fz = Bridge.Hand(Gameplay.nDominant)
-        if bValid ~= 1 then return nil end
-        return Vector3:new(ox, oy, oz), Vector3:new(fx, fy, fz)
-    end
-    InputAPI.GetMouseRay = function(...)
-        local vStart, vDir = HandRay()
-        if vStart then return api.camera.GetMainCameraID(), vStart, vDir end
-        return fnRay(...)
-    end
-    if fnRayUnclamped then
-        InputAPI.GetMouseRayUnclamped = function(...)
-            local vStart, vDir = HandRay()
-            if vStart then return api.camera.GetMainCameraID(), vStart, vDir end
-            return fnRayUnclamped(...)
+    local bOk, RaycastUtils = pcall(require, "Helpers.RaycastUtils")
+    if not bOk or global.type(RaycastUtils) ~= "table" or RaycastUtils.__JWE3VRPatched then return end
+    local fnCursor = RaycastUtils.GetCursorRaycast
+    if global.type(fnCursor) ~= "function" then return end
+    RaycastUtils.__JWE3VRPatched = true
+    RaycastUtils.GetCursorRaycast = function(...)
+        if Gameplay.bLaser then
+            local bValid, ox, oy, oz, fx, fy, fz = Bridge.Hand(Gameplay.nDominant)
+            if bValid == 1 then return Vector3:new(ox, oy, oz), Vector3:new(fx, fy, fz) end
         end
+        return fnCursor(...)
     end
 end
 

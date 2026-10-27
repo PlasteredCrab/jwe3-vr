@@ -99,12 +99,25 @@ std::string DecodeMarker(UINT metadata, const void* data, UINT size) {
         for (UINT i = 0; i < size / 2 && w[i]; ++i) s.push_back((char)w[i]);
         return s;
     }
-    // ANSI, or PIX3 encoded (strings packed into UINT64s): keep the longest printable run.
+    // ANSI, or PIX3 encoded (strings packed into UINT64s, as 8-bit or UTF-16 characters): keep the
+    // longest printable run, read both as bytes and as 16-bit units. JWE3 sends PIX3 events with UTF-16
+    // names, which a byte scan cuts to their first letter.
     const uint8_t* b = (const uint8_t*)data;
     std::string run;
     for (UINT i = 0; i < size; ++i) {
         if (b[i] >= 32 && b[i] < 127) {
             run.push_back((char)b[i]);
+        } else {
+            if (run.size() > s.size()) s = run;
+            run.clear();
+        }
+    }
+    if (run.size() > s.size()) s = run;
+    run.clear();
+    for (UINT i = 0; i + 1 < size; i += 2) {
+        unsigned c = b[i] | (b[i + 1] << 8);
+        if (c >= 32 && c < 127) {
+            run.push_back((char)c);
         } else {
             if (run.size() > s.size()) s = run;
             run.clear();

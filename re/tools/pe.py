@@ -1,7 +1,8 @@
 # Shared helpers for the RE scripts: open the game exe, find its real code, read strings and
 # the function table. The exe comes from the command line (--exe), the JWE3_EXE environment
-# variable, or the default Steam path. Run every script with "python -E" from a scratch folder;
-# outputs (strings.tsv, leas.pkl, ...) land in the current directory.
+# variable, or the default Steam path. Run every script with the RE venv on E: (pefile + capstone):
+#   E:\Modding\tools\re-venv\Scripts\python.exe -E <tools>\<script>.py
+# from re\work (git-ignored); outputs (strings.tsv, leas.pkl, ...) land in the current directory.
 import glob, math, os, pickle, struct, sys
 
 import pefile

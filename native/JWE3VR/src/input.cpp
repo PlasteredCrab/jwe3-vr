@@ -7,6 +7,8 @@
 
 #include <Xinput.h>
 
+#include <cstdio>
+
 namespace jvr::input {
 
 using namespace vm;
@@ -40,7 +42,179 @@ static bool g_cursorInit = false;
 static SHORT Axis(float v) { return (SHORT)std::clamp(v * 32767.f, -32767.f, 32767.f); }
 static BYTE Trig(float v) { return (BYTE)std::clamp(v * 255.f, 0.f, 255.f); }
 
+// Debug aid for remote tests: a file JWE3VR_pad.txt next to the DLL is played step by step, one per line:
+//   <actions> <ms>    actions joined with '+', held for <ms>:
+//     pad 0 buttons     A B X Y START BACK UP DOWN LEFT RIGHT LB RB LS RS LT RT, sticks LX=/LY=/RX=/RY= -1..1
+//     window messages   K=ENTER|ESC|UP|DOWN|LEFT|RIGHT|SPACE|TAB|BACK|0xNN (key down at the start, up at the end),
+//                       CLICK=x,y (left click at x,y as fractions of the client area, down then up)
+//     FOCUS             post the window-activation messages (the game ignores input while it thinks it is
+//                       in the background; real focus is not changed)
+//     '-'               nothing
+// The file is consumed when read. Steps advance on the render thread (DebugTick), so the script runs even when
+// the game does not poll pad 0; while it runs pad 0 reports itself connected. Keys and clicks are posted to the
+// game's own window from inside the process (no SendInput).
+struct PadStep {
+    XINPUT_GAMEPAD pad{};
+    std::vector<WPARAM> keys;
+    float clickX = -1, clickY = -1;
+    bool focus = false;
+    ULONGLONG ms = 0;
+};
+static std::vector<PadStep> g_script;
+static size_t g_scriptStep = 0;
+static ULONGLONG g_scriptStepAt = 0;
+static ULONGLONG g_scriptCheck = 0;
+static DWORD g_scriptPacket = 0x40000000;
+static std::atomic<unsigned> g_getStateCalls[4]{}, g_getCapsCalls{0};
+
+static bool ParsePadStep(const std::string& line, PadStep& s) {
+    char what[256] = {};
+    unsigned ms = 0;
+    if (sscanf_s(line.c_str(), "%255s %u", what, (unsigned)sizeof(what), &ms) != 2) return false;
+    s.ms = ms;
+    std::string all = what;
+    size_t at = 0;
+    while (at <= all.size()) {
+        size_t plus = all.find('+', at);
+        std::string t = all.substr(at, plus == std::string::npos ? std::string::npos : plus - at);
+        at = plus == std::string::npos ? all.size() + 1 : plus + 1;
+        float v = 0, w = 0;
+        unsigned vk = 0;
+        static const struct { const char* name; WORD bit; } kButtons[] = {
+            {"A", XINPUT_GAMEPAD_A}, {"B", XINPUT_GAMEPAD_B}, {"X", XINPUT_GAMEPAD_X}, {"Y", XINPUT_GAMEPAD_Y},
+            {"START", XINPUT_GAMEPAD_START}, {"BACK", XINPUT_GAMEPAD_BACK}, {"UP", XINPUT_GAMEPAD_DPAD_UP},
+            {"DOWN", XINPUT_GAMEPAD_DPAD_DOWN}, {"LEFT", XINPUT_GAMEPAD_DPAD_LEFT}, {"RIGHT", XINPUT_GAMEPAD_DPAD_RIGHT},
+            {"LB", XINPUT_GAMEPAD_LEFT_SHOULDER}, {"RB", XINPUT_GAMEPAD_RIGHT_SHOULDER}, {"LS", XINPUT_GAMEPAD_LEFT_THUMB},
+            {"RS", XINPUT_GAMEPAD_RIGHT_THUMB}};
+        static const struct { const char* name; WPARAM vk; } kKeys[] = {
+            {"K=ENTER", VK_RETURN}, {"K=ESC", VK_ESCAPE}, {"K=UP", VK_UP}, {"K=DOWN", VK_DOWN}, {"K=LEFT", VK_LEFT},
+            {"K=RIGHT", VK_RIGHT}, {"K=SPACE", VK_SPACE}, {"K=TAB", VK_TAB}, {"K=BACK", VK_BACK}};
+        bool known = t == "-" || t.empty();
+        for (auto& b : kButtons)
+            if (t == b.name) s.pad.wButtons |= b.bit, known = true;
+        for (auto& k : kKeys)
+            if (t == k.name) s.keys.push_back(k.vk), known = true;
+        if (!known && sscanf_s(t.c_str(), "K=0x%x", &vk) == 1) s.keys.push_back(vk), known = true;
+        if (t == "LT") s.pad.bLeftTrigger = 255, known = true;
+        if (t == "RT") s.pad.bRightTrigger = 255, known = true;
+        if (sscanf_s(t.c_str(), "LX=%f", &v) == 1) s.pad.sThumbLX = Axis(v), known = true;
+        if (sscanf_s(t.c_str(), "LY=%f", &v) == 1) s.pad.sThumbLY = Axis(v), known = true;
+        if (sscanf_s(t.c_str(), "RX=%f", &v) == 1) s.pad.sThumbRX = Axis(v), known = true;
+        if (sscanf_s(t.c_str(), "RY=%f", &v) == 1) s.pad.sThumbRY = Axis(v), known = true;
+        if (sscanf_s(t.c_str(), "CLICK=%f,%f", &v, &w) == 2) s.clickX = v, s.clickY = w, known = true;
+        if (t == "FOCUS") s.focus = true, known = true;
+        if (!known) return false;
+    }
+    return true;
+}
+
+static LPARAM KeyLParam(WPARAM vk, bool up) {
+    UINT scan = MapVirtualKeyW((UINT)vk, MAPVK_VK_TO_VSC);
+    LPARAM l = 1 | ((LPARAM)scan << 16);
+    if (vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT) l |= (LPARAM)1 << 24; // extended key
+    if (up) l |= ((LPARAM)1 << 30) | ((LPARAM)1 << 31);
+    return l;
+}
+
+static LPARAM ClientPoint(float fx, float fy) {
+    RECT r{};
+    GetClientRect(g_hwnd, &r);
+    int x = (int)(fx * (r.right - r.left)), y = (int)(fy * (r.bottom - r.top));
+    return MAKELPARAM(x, y);
+}
+
+// Window messages of a step: at its start (down) and at its end (up). Caller holds g_lock.
+static void StepMessages(const PadStep& s, bool start) {
+    if (!g_hwnd) return;
+    if (start && s.focus) {
+        PostMessageW(g_hwnd, WM_ACTIVATEAPP, TRUE, 0);
+        PostMessageW(g_hwnd, WM_NCACTIVATE, TRUE, 0);
+        PostMessageW(g_hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+        PostMessageW(g_hwnd, WM_SETFOCUS, 0, 0);
+    }
+    for (WPARAM vk : s.keys) PostMessageW(g_hwnd, start ? WM_KEYDOWN : WM_KEYUP, vk, KeyLParam(vk, !start));
+    if (s.clickX >= 0) {
+        LPARAM pt = ClientPoint(s.clickX, s.clickY);
+        if (start) {
+            PostMessageW(g_hwnd, WM_MOUSEMOVE, 0, pt);
+            PostMessageW(g_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, pt);
+        } else {
+            PostMessageW(g_hwnd, WM_LBUTTONUP, 0, pt);
+        }
+    }
+}
+
+static void LoadPadScript(ULONGLONG now) {
+    std::wstring path = ModuleDir() + L"JWE3VR_pad.txt";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, path.c_str(), L"r") != 0 || !f) return;
+    std::vector<PadStep> steps;
+    char buf[512];
+    int lineNo = 0, bad = 0;
+    while (fgets(buf, sizeof(buf), f)) {
+        ++lineNo;
+        std::string line = buf;
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        PadStep s;
+        if (ParsePadStep(line, s)) steps.push_back(s);
+        else ++bad, LOGW("debug: pad script line %d not understood: %s", lineNo, line.c_str());
+    }
+    fclose(f);
+    DeleteFileW(path.c_str());
+    if (!g_script.empty() && g_scriptStep < g_script.size()) StepMessages(g_script[g_scriptStep], false);
+    g_script = std::move(steps);
+    g_scriptStep = 0;
+    g_scriptStepAt = now;
+    if (!g_script.empty()) StepMessages(g_script[0], true);
+    LOGI("debug: pad script loaded, %zu steps (%d lines skipped)", g_script.size(), bad);
+}
+
+void DebugTick() {
+    ULONGLONG now = GetTickCount64();
+    std::lock_guard<std::mutex> l(g_lock);
+    if (now - g_scriptCheck > 500) {
+        g_scriptCheck = now;
+        LoadPadScript(now);
+    }
+    while (g_scriptStep < g_script.size() && now - g_scriptStepAt >= g_script[g_scriptStep].ms) {
+        StepMessages(g_script[g_scriptStep], false);
+        g_scriptStepAt += g_script[g_scriptStep].ms;
+        ++g_scriptStep;
+        ++g_scriptPacket;
+        if (g_scriptStep == g_script.size()) {
+            LOGI("debug: pad script finished");
+            g_script.clear();
+            g_scriptStep = 0;
+        } else {
+            StepMessages(g_script[g_scriptStep], true);
+        }
+    }
+}
+
+std::string DebugSummary() {
+    char buf[256];
+    HWND fg = GetForegroundWindow();
+    snprintf(buf, sizeof(buf), "XInputGetState calls %u/%u/%u/%u, GetCapabilities %u; game window %s",
+             g_getStateCalls[0].load(), g_getStateCalls[1].load(), g_getStateCalls[2].load(), g_getStateCalls[3].load(),
+             g_getCapsCalls.load(), !g_hwnd ? "unknown" : (fg == g_hwnd ? "in the foreground" : "NOT in the foreground"));
+    return buf;
+}
+
+// Fills pad 0 from the running script; false when no script is playing.
+static bool ScriptedPad(XINPUT_STATE* state) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (g_script.empty()) return false;
+    if (state) {
+        state->dwPacketNumber = g_scriptPacket;
+        state->Gamepad = g_script[g_scriptStep].pad;
+    }
+    return true;
+}
+
 static DWORD WINAPI Hk_GetState(DWORD index, XINPUT_STATE* state) {
+    if (index < 4) ++g_getStateCalls[index];
+    if (index == 0 && ScriptedPad(state)) return ERROR_SUCCESS;
     if (index == 0 && config::Get().virtualPad) {
         std::lock_guard<std::mutex> l(g_lock);
         if (g_padLive && g_flags.pad == PadMode::Passthrough && state) {
@@ -53,7 +227,13 @@ static DWORD WINAPI Hk_GetState(DWORD index, XINPUT_STATE* state) {
 }
 
 static DWORD WINAPI Hk_GetCaps(DWORD index, DWORD flags, XINPUT_CAPABILITIES* caps) {
-    if (index == 0 && config::Get().virtualPad && g_padLive && caps) {
+    ++g_getCapsCalls;
+    bool scripted = false;
+    {
+        std::lock_guard<std::mutex> l(g_lock);
+        scripted = !g_script.empty();
+    }
+    if (index == 0 && (scripted || (config::Get().virtualPad && g_padLive)) && caps) {
         DWORD r = o_GetCaps(index, flags, caps);
         if (r == ERROR_SUCCESS) return r;
         memset(caps, 0, sizeof(*caps));

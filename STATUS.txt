@@ -1,6 +1,43 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-26  0.0.3  First runs in JWE3 (main menu only, no headset worn, remote over RDP; no park loaded)
+    - Installed with deploy.ps1 -NoProxy (new): no version.dll next to JWE3.exe, because this PC runs Sophos Endpoint
+      Defense and DLL side-loading is what it watches; JWE3VR.Hooks.Install now loads JWE3VR.dll through the game's
+      own package.loadlib at startup. No Sophos detections (C:\ProgramData\Sophos logs checked).
+    - All tools, caches and temp files moved to E: (E:\Modding\tools: python311, re-venv, cobra-tools, pip-cache,
+      ghidra-home; build temp in native\JWE3VR\build\tmp; downloads in third_party). capstone removed from the C: user site.
+    - Lua milestones now reach JWE3VR.log through the bridge (codes 100-109, names in bridge.cpp), and the bridge logs
+      its first call, so a run can be followed without the game's Lua trace.
+    - Run 1 (re/work/run1_JWE3VR.log), all at startup, ~35 s after launch:
+        * "bridge: first call from Lua (op 0); stack layout OK" - the Lua stack layout is confirmed at runtime.
+        * "hooks installed (require wrapped)", "environment loader patched" - the own loader runs at database init.
+        * every D3D12 / DXGI / XInput hook installed; present queue from the last-direct-queue fallback (expected for a
+          late load); OpenXR: SteamVR/OpenXR 2.18.4, session created (stage space), swapchains 1920x1080 format 24
+          (R10G10B10A2, same as the backbuffer); session reached state 3 (synchronized) - nobody wearing the headset.
+        * MarkerDump turned on live through the ini (reload works): every marker decoded as "W".
+        * Closed with a normal close request; no crash.
+    - Fixes after run 1: DecodeMarker also reads PIX3 markers as UTF-16 (JWE3's names are UTF-16, the byte scan kept only
+      the first letter, so no UI / TAA pass could ever match); our own throwaway swapchain is no longer logged or taken
+      as the game's (thread-local flag instead of resetting the queue afterwards).
+    - Later runs (remote, via in-game debug screenshot + window-message clicks; game 1.5.5.1023846):
+        * Reached the main menu and a Sandbox park. Retail JWE3 emits no PIX markers for its passes (only two D3D12
+          runtime ones), so marker-based HUD / TAA / sync features need another pass detector. The game polls no
+          XInput on the menus and ignores posted keys; posted clicks work only while it has focus (FOCUS step helps).
+        * A park runs in its own Lua VM. The VR manager is created there and Gameplay.Init now succeeds (JWE3 makes
+          the api tables read-only, so laser picking now wraps Helpers.RaycastUtils.GetCursorRaycast). All hooks
+          (camera manager, 23 camera mode modules, drive, gunner) report patched in that VM, but the camera has
+          NOT been driven yet: neither the manager-level nor the mode-level wrappers have logged a tick, and the
+          manager's 5 s diagnostic never printed. Next: find out whether the park environment calls the manager's
+          Advance at all and which VM runs the camera component (log from Init a per-frame hook that cannot miss).
+        * GPU fault caused by the mod (NVIDIA event 153 at 22:54:20): the debug screenshot freed / reused buffers the
+          GPU was still using while the game shut down; the game then exited with its own 0xFDEAD fatal path and
+          showed a "GPU Driver Crash" dialog on the next start. Fixed: Submit never resets an allocator still in
+          flight (waits 2 s, else skips), WaitCopies returns success, callers leak instead of freeing in-use memory.
+          Not Sophos: no detections in its logs; SophosED.dll frames were just its API hooks. The crash reporter
+          was closed without sending anything.
+        * In-park closing: a close request opens a quit dialog; the run scripts now end the process instead.
+
 2026-10-26  0.0.2  Phase 0 done offline against JWE3.exe build 1792088119 - built, unit-tested, packs into a JWE3
                    Main.ovl; NOT run in the game or a headset
     - Install: E:\SteamLibrary\steamapps\common\Jurassic World Evolution 3, Steam build 25967550, JWE3.exe.

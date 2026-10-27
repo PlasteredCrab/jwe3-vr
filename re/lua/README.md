@@ -25,10 +25,17 @@ cd /e/Modding/tools/cobra-tools
 .venv/Scripts/python -m pip install imageio "numpy<2" pillow "bitarray~=2.9.2"
 ```
 
+The binary RE scripts in `re/tools` use a second venv on the same Python, with pefile and capstone (pip's
+cache also kept on E:):
+
+```bash
+cd /e/Modding/tools && PIP_CACHE_DIR=E:/Modding/tools/pip-cache python311/python.exe -m venv re-venv && re-venv/Scripts/python -m pip install pefile capstone
+```
+
 Find which modules mention a name (constants, fields, function names), about 12 s over everything:
 
 ```bash
-python -E re/tools/luagrep.py re/lua/Content0 re/lua/GameMain -- FireFlare TranquilliseDinosaur
+/e/Modding/tools/re-venv/Scripts/python -E re/tools/luagrep.py re/lua/Content0 re/lua/GameMain -- FireFlare TranquilliseDinosaur
 ```
 
 ## Extract and decompile

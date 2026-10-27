@@ -115,11 +115,17 @@ bool Submit(const std::function<void(ID3D12GraphicsCommandList*)>& record) {
     std::lock_guard<std::mutex> l(g_copyLock);
     if (!InitCopy()) return false;
     CopySlot& s = g_slots[g_slot];
-    g_slot = (g_slot + 1) % 8;
     if (g_fence->GetCompletedValue() < s.fenceValue) {
         g_fence->SetEventOnCompletion(s.fenceValue, g_fenceEvent);
-        WaitForSingleObject(g_fenceEvent, 100);
+        WaitForSingleObject(g_fenceEvent, 2000);
+        // Never reset an allocator the GPU may still be reading: skip this copy instead (a stalled or
+        // shutting-down queue). Resetting it anyway faulted the GPU on JWE3 (NVIDIA event 153).
+        if (g_fence->GetCompletedValue() < s.fenceValue) {
+            JVR_LOG_ONCE("copy queue stalled for 2 s; skipping copies until it catches up");
+            return false;
+        }
     }
+    g_slot = (g_slot + 1) % 8;
     s.alloc->Reset();
     g_copyList->Reset(s.alloc, nullptr);
     record(g_copyList);
@@ -155,11 +161,12 @@ void RecordCopy(ID3D12GraphicsCommandList* list, ID3D12Resource* src, D3D12_RESO
     list->ResourceBarrier(srcNeedsBarrier ? 2 : 1, srcNeedsBarrier ? post : post + 1);
 }
 
-void WaitCopies() {
+bool WaitCopies() {
     std::lock_guard<std::mutex> l(g_copyLock);
-    if (!g_fence || g_fence->GetCompletedValue() >= g_fenceValue) return;
+    if (!g_fence || g_fence->GetCompletedValue() >= g_fenceValue) return true;
     g_fence->SetEventOnCompletion(g_fenceValue, g_fenceEvent);
-    WaitForSingleObject(g_fenceEvent, 1000);
+    WaitForSingleObject(g_fenceEvent, 2000);
+    return g_fence->GetCompletedValue() >= g_fenceValue;
 }
 
 ID3D12Resource* NextBackbuffer() {
@@ -169,7 +176,11 @@ ID3D12Resource* NextBackbuffer() {
     return bb;
 }
 
+// Set while InstallHooks creates its own throwaway swapchain, so that one is not taken for the game's.
+static thread_local bool t_creatingDummy = false;
+
 static void RememberSwapQueue(IUnknown* device) {
+    if (t_creatingDummy) return;
     ID3D12CommandQueue* q = nullptr;
     if (device && SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&q)))) {
         g_swapQueue = q; // keep the reference: the queue lives as long as the game's swapchain
@@ -253,11 +264,119 @@ static bool EnsureDotTexture() {
         D3D12_RESOURCE_BARRIER b = Transition(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE);
         l->ResourceBarrier(1, &b);
     });
-    WaitCopies();
-    upload->Release();
+    if (WaitCopies()) upload->Release(); // else leak it: the GPU may still read it
     g_dotTex = tex;
     g_dotFormat = fmt;
     return true;
+}
+
+// Debug aid for remote tests: a file JWE3VR_shot.req next to the DLL asks for the frame being presented,
+// written as JWE3VR_shot.bmp (24-bit) in the same folder. Runs on the present thread; stalls one frame.
+static void WriteBmp(const std::wstring& path, UINT w, UINT h, const std::vector<uint8_t>& bgr) {
+    UINT row = (w * 3 + 3) & ~3u;
+    BITMAPFILEHEADER fh{};
+    BITMAPINFOHEADER ih{};
+    fh.bfType = 0x4D42;
+    fh.bfOffBits = sizeof(fh) + sizeof(ih);
+    fh.bfSize = fh.bfOffBits + row * h;
+    ih.biSize = sizeof(ih);
+    ih.biWidth = (LONG)w;
+    ih.biHeight = (LONG)h; // bottom-up
+    ih.biPlanes = 1;
+    ih.biBitCount = 24;
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n;
+    WriteFile(f, &fh, sizeof(fh), &n, nullptr);
+    WriteFile(f, &ih, sizeof(ih), &n, nullptr);
+    std::vector<uint8_t> line(row, 0);
+    for (UINT y = 0; y < h; ++y) {
+        memcpy(line.data(), &bgr[(size_t)(h - 1 - y) * w * 3], (size_t)w * 3);
+        WriteFile(f, line.data(), row, &n, nullptr);
+    }
+    CloseHandle(f);
+}
+
+static void DebugScreenshot() {
+    ID3D12Resource* bb = NextBackbuffer();
+    if (!bb) return;
+    D3D12_RESOURCE_DESC d = bb->GetDesc();
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+    UINT rows = 0;
+    UINT64 rowSize = 0, total = 0;
+    g_device->GetCopyableFootprints(&d, 0, 1, 0, &fp, &rows, &rowSize, &total);
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
+    D3D12_RESOURCE_DESC bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = total;
+    bd.Height = 1;
+    bd.DepthOrArraySize = 1;
+    bd.MipLevels = 1;
+    bd.SampleDesc.Count = 1;
+    bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    ID3D12Resource* rb = nullptr;
+    if (FAILED(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                 IID_PPV_ARGS(&rb)))) {
+        bb->Release();
+        LOGW("debug: screenshot readback buffer failed");
+        return;
+    }
+    bool submitted = Submit([&](ID3D12GraphicsCommandList* l) {
+        D3D12_RESOURCE_BARRIER b = Transition(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        l->ResourceBarrier(1, &b);
+        D3D12_TEXTURE_COPY_LOCATION dst{rb, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+        dst.PlacedFootprint = fp;
+        D3D12_TEXTURE_COPY_LOCATION src{bb, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        b = Transition(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
+        l->ResourceBarrier(1, &b);
+    });
+    if (!submitted || !WaitCopies()) {
+        // Not copied, or the GPU has not finished: keep both alive (leak) rather than free memory in use.
+        LOGW("debug: screenshot skipped (copy queue busy)");
+        return;
+    }
+    uint8_t* p = nullptr;
+    D3D12_RANGE range{0, (SIZE_T)total};
+    UINT w = (UINT)d.Width, h = d.Height;
+    bool ok = false;
+    if (SUCCEEDED(rb->Map(0, &range, (void**)&p)) && p) {
+        std::vector<uint8_t> bgr((size_t)w * h * 3);
+        ok = true;
+        for (UINT y = 0; y < h && ok; ++y) {
+            const uint8_t* row = p + fp.Offset + (size_t)y * fp.Footprint.RowPitch;
+            uint8_t* out = &bgr[(size_t)y * w * 3];
+            for (UINT x = 0; x < w; ++x) {
+                uint32_t v = ((const uint32_t*)row)[x];
+                uint8_t r, g, b;
+                switch (d.Format) {
+                case DXGI_FORMAT_R10G10B10A2_UNORM:
+                    r = (uint8_t)((v & 0x3FF) >> 2), g = (uint8_t)(((v >> 10) & 0x3FF) >> 2), b = (uint8_t)(((v >> 20) & 0x3FF) >> 2);
+                    break;
+                case DXGI_FORMAT_R8G8B8A8_UNORM:
+                case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+                    r = (uint8_t)v, g = (uint8_t)(v >> 8), b = (uint8_t)(v >> 16);
+                    break;
+                case DXGI_FORMAT_B8G8R8A8_UNORM:
+                case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+                    b = (uint8_t)v, g = (uint8_t)(v >> 8), r = (uint8_t)(v >> 16);
+                    break;
+                default:
+                    ok = false;
+                    r = g = b = 0;
+                    break;
+                }
+                out[x * 3 + 0] = b, out[x * 3 + 1] = g, out[x * 3 + 2] = r;
+            }
+        }
+        D3D12_RANGE none{0, 0};
+        rb->Unmap(0, &none);
+        if (ok) WriteBmp(ModuleDir() + L"JWE3VR_shot.bmp", w, h, bgr);
+    }
+    rb->Release();
+    bb->Release();
+    if (ok) LOGI("debug: screenshot %ux%u saved to JWE3VR_shot.bmp; %s", w, h, input::DebugSummary().c_str());
+    else LOGW("debug: screenshot failed (backbuffer format %d)", (int)d.Format);
 }
 
 static void OnPresent(IDXGISwapChain* sc) {
@@ -277,10 +396,16 @@ static void OnPresent(IDXGISwapChain* sc) {
         LOGI("game present queue %p, device %p", g_queue, g_device);
     }
     if (!g_swap) sc->QueryInterface(IID_PPV_ARGS(&g_swap));
+    input::DebugTick();
     ULONGLONG now = GetTickCount64();
     if (now - g_lastConfigCheck > 1000) {
         g_lastConfigCheck = now;
         if (config::ReloadIfChanged()) LOGI("settings reloaded");
+        std::wstring req = ModuleDir() + L"JWE3VR_shot.req";
+        if (GetFileAttributesW(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileW(req.c_str());
+            DebugScreenshot();
+        }
     }
     if (xr::NeedsReinit()) {
         LOGW("OpenXR session ended; retrying in 5 s");
@@ -545,8 +670,9 @@ bool InstallHooks() {
         hooks::Create("IDXGIFactory::CreateSwapChain", hooks::VtableEntry(factory, 10), (void*)Hk_CreateSwap, (void**)&o_CreateSwap);
         hooks::Create("IDXGIFactory2::CreateSwapChainForHwnd", hooks::VtableEntry(factory, 15), (void*)Hk_CreateSwapForHwnd,
                       (void**)&o_CreateSwapForHwnd);
+        t_creatingDummy = true;
         ok = SUCCEEDED(factory->CreateSwapChainForHwnd(queue, hwnd, &sd, nullptr, nullptr, &sc));
-        g_swapQueue = nullptr; // that was our dummy
+        t_creatingDummy = false;
         if (ok) {
             hooks::Create("IDXGISwapChain::Present", hooks::VtableEntry(sc, 8), (void*)Hk_Present, (void**)&o_Present);
             hooks::Create("IDXGISwapChain::ResizeBuffers", hooks::VtableEntry(sc, 13), (void*)Hk_Resize, (void**)&o_Resize);

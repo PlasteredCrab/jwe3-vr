@@ -20,14 +20,35 @@ local JWE3VRManager = module(..., Mutators.Manager())
 
 JWE3VRManager.Init = function(self, _tProperties, _tEnvironment)
     api.debug.Trace("JWE3VRManager:Init()")
-    -- Catch hooked modules that were loaded through a require captured before ours was installed.
-    require("JWE3VR.Hooks").Sweep()
     self.nPendingTimer = 0
     self.bHooksDone = false
+    -- A park runs in its own Lua VM: load the bridge here first, so what the sweep patches gets logged.
     self.bReady = Bridge.Load()
+    -- Catch hooked modules that were loaded through a require captured before ours was installed.
+    local Hooks = require("JWE3VR.Hooks")
+    Hooks.Sweep()
     if not self.bReady then return end
+    Bridge.Log(Bridge.M.ManagerInit)
+    local tState = {}
+    for sKey, tHook in global.pairs(Hooks.tByKey) do
+        tState[#tState + 1] = tHook.sName .. "=" .. (Hooks.tDone[sKey] and "patched" or "pending")
+    end
+    Bridge.Text("hooks in this VM: installed=" .. tostring(Hooks.bInstalled == true) .. "; " .. global.table.concat(tState, ", "))
+    -- Which hooked modules this Lua state can see (diagnostic for the first JWE3 runs).
+    local tLoaded = global.package and global.package.loaded or {}
+    for _, sName in global.ipairs({"Components.Cameras.CameraModeManager", "Environments.ParkEnvironment",
+                                   "Editors.Vehicle.DriveVehicleUIMode", "Environment.Environment"}) do
+        local t = tLoaded[sName] or tLoaded[global.string.lower(sName)]
+        Bridge.Text("manager init: package.loaded " .. sName .. " = " .. global.type(t))
+    end
     local bOk, sErr = pcall(Gameplay.Init, _tEnvironment)
-    if not bOk then api.debug.Trace("JWE3VR gameplay init: " .. tostring(sErr)) end
+    if bOk then
+        Bridge.Log(Bridge.M.GameplayInit)
+    else
+        api.debug.Trace("JWE3VR gameplay init: " .. tostring(sErr))
+        Bridge.Log(Bridge.M.LuaError, 1)
+        Bridge.Text("gameplay init failed: " .. tostring(sErr))
+    end
 
     self.tReceivers = {}
     local messaging = api.messaging
@@ -40,6 +61,21 @@ end
 
 JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
     if not self.bReady then return end
+    -- JWE3 environments pass only the (scaled) delta time to the Advance phase.
+    _nUnscaledDeltaTime = _nUnscaledDeltaTime or _nDeltaTime or 0
+    -- Camera diagnostic for the first JWE3 runs: 5 s into the park, report what the mode wrappers saw.
+    self.nDiagTime = (self.nDiagTime or 0) + _nUnscaledDeltaTime
+    if not self.bCameraDiag and self.nDiagTime > 5 then
+        self.bCameraDiag = true
+        local Camera = require("JWE3VR.Camera")
+        local bOk, tWorld = pcall(api.world.GetWorldAPIs)
+        local cmm = bOk and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
+        Bridge.Text("camera diag (manager VM): mode Advance calls " .. tostring(Camera.nModeCalls or 0) ..
+                    ", last skip " .. tostring(Camera.sSkip) .. ", driven " .. tostring(Camera.bModeDriven) ..
+                    ", mode " .. tostring(Camera.sMode) .. "; world CameraModeManager " .. global.type(cmm) ..
+                    ", tEntities " .. global.type(cmm and global.rawget(cmm, "tEntities")) ..
+                    ", Advance patched " .. tostring(cmm and cmm.Advance and global.rawequal(cmm.Advance, (global.package.loaded["Components.Cameras.CameraModeManager"] or {}).Advance)))
+    end
     -- Hooked modules loaded after park start (UI modes on first use) through a captured require.
     if not self.bHooksDone then
         self.nPendingTimer = self.nPendingTimer - (_nUnscaledDeltaTime or 0)
@@ -52,6 +88,8 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
     if not bOk and not self.bErrorLogged then
         self.bErrorLogged = true
         api.debug.Trace("JWE3VR gameplay: " .. tostring(sErr))
+        Bridge.Log(Bridge.M.LuaError, 2)
+        Bridge.Text("gameplay advance failed: " .. tostring(sErr))
     end
 end
 

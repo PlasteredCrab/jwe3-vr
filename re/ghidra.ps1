@@ -12,7 +12,9 @@ param(
     [string]$Jdk = (Join-Path $env:USERPROFILE '.jdks\corretto-21.0.10'),
     [string]$MaxMem = '20G',
     [string]$ProjectDir = (Join-Path $PSScriptRoot 'ghidra'),
-    [string]$ProjectName = 'JWE3'
+    [string]$ProjectName = 'JWE3',
+    # Ghidra's settings, cache and temp files (default: under %APPDATA%, %LOCALAPPDATA% and %TEMP% on C:).
+    [string]$GhidraHome = 'E:\Modding\tools\ghidra-home'
 )
 $ErrorActionPreference = 'Stop'
 if (-not ($Import -or $Dump)) { throw 'pass -Import and/or -Dump' }
@@ -29,9 +31,13 @@ $scripts = Join-Path $PSScriptRoot 'ghidra_scripts'
 $env:JAVA_HOME = $Jdk
 $env:PATH = "$Jdk\bin;$env:PATH"
 
+foreach ($d in 'settings', 'cache', 'tmp') { New-Item -ItemType Directory -Force (Join-Path $GhidraHome $d) | Out-Null }
+if ($GhidraHome -match '\s') { throw "GhidraHome must not contain spaces: $GhidraHome" }
+$vmArgs = "-Dapplication.settingsdir=$GhidraHome\settings -Dapplication.cachedir=$GhidraHome\cache -Djava.io.tmpdir=$GhidraHome\tmp"
+
 function Invoke-Headless([string[]]$headlessArgs) {
-    # Same call analyzeHeadless.bat makes, with our heap size.
-    & cmd /c "`"$launch`" fg jdk Ghidra-Headless $MaxMem `"`" ghidra.app.util.headless.AnalyzeHeadless $($headlessArgs -join ' ')"
+    # Same call analyzeHeadless.bat makes, with our heap size and Ghidra's own files kept under $GhidraHome.
+    & cmd /c "`"$launch`" fg jdk Ghidra-Headless $MaxMem `"$vmArgs`" ghidra.app.util.headless.AnalyzeHeadless $($headlessArgs -join ' ')"
     if ($LASTEXITCODE -ne 0) { throw "Ghidra headless failed ($LASTEXITCODE)" }
 }
 

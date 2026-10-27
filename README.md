@@ -143,18 +143,25 @@ powershell -ExecutionPolicy Bypass -File native/JWE3VR/test.ps1
 The tests need no game or headset: rig math, the Lua bridge against a fake `lua_State` (including the layout
 self-check), and a Lua 5.3 syntax check of the content pack.
 
+Everything stays on E:: compiler temp files go to `native\JWE3VR\build\tmp`, downloads to `third_party\`, and the
+tools to `E:\Modding\tools` (`cobra-tools`, portable `python311`, the `re-venv` for the RE scripts, `pip-cache`,
+and `ghidra-home` for Ghidra's settings, cache and temp files).
+
 ## Install
 
 Untested in the game so far. The pack's `Main.ovl` is built with cobra-tools (`E:\Modding\tools\cobra-tools`, a
 Python 3.11 venv; see `re/lua/README.md`). Close the game, then:
 
 ```bash
-powershell -ExecutionPolicy Bypass -File deploy.ps1 -Build
+powershell -ExecutionPolicy Bypass -File deploy.ps1 -Build -NoProxy
 ```
 
-This copies `version.dll` next to the game exe and the pack (`JWE3VR.dll`, `openxr_loader.dll`, `Manifest.xml`,
-`Main.ovl`) into `Win64\ovldata\JWE3VR`. Remove it again with `deploy.ps1 -Uninstall`.
-`deploy.ps1 -Package` builds `dist\JWE3VR.zip` to unzip into a game folder. ACSE is not required.
+This copies the pack (`JWE3VR.dll`, `openxr_loader.dll`, `Manifest.xml`, `Main.ovl`) into `Win64\ovldata\JWE3VR`.
+With `-NoProxy` (used on the dev machine) nothing goes next to the exe: the game's own Lua loads `JWE3VR.dll` when
+content packs start, which avoids the `version.dll` side-loading pattern that endpoint protection (Sophos there)
+watches for. Without `-NoProxy`, `version.dll` is also copied next to `JWE3.exe` so the mod starts before the
+renderer. Remove it all with `deploy.ps1 -Uninstall`. `deploy.ps1 -Package` builds `dist\JWE3VR.zip` to unzip into a
+game folder. ACSE is not required.
 
 ## Run
 
