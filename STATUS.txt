@@ -1,6 +1,24 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.16  Walking (the guest view) reached remotely; the game's FOV comes back after VR (runs 83-84)
+    - New re/remote/guest.sh: park, the mod off live, the guest-camera button (second from the bottom of the left
+      toolbar), "SELECT START LOCATION" checked in the screenshot, a start spot clicked, the mod back on. The
+      button opens the GuestCamDropper mode (main HUD state "guestcam"); a click on the ground starts GuestCam.
+    - Seen in game (headset not worn): "ui mode guest in" -> camera mode Guest, rig kind 2 (walking) on the frame.
+      The eye sits low and looks down into the grass - the headset rests on a desk tilted down, and walking puts
+      the eye at the headset's real height above the guest's feet (by design). Pad left stick forward (scripted)
+      walked the guest and the VR view moved with it. Not tried: head-yaw steering and snap turns (they come from
+      the VR controllers), the on-foot ranger tools.
+    - Fix: the camera manager sends its FOV only when it changes (tData.nFOVY per camera entity), so after the VR
+      view stopped - the mod switched off live, a flat-screen mode, the headset gone - the flat screen kept the
+      headset's wide FOV (run 83: guest view before / after differed by 28.8 grey levels per pixel). When the rig
+      stops writing the camera, that cache is reset (as the manager's own init does) and the manager sends its own
+      FOV again: run 84, flat view before VR and after VR off framed identically (10.7, grass sway).
+    - My mistake in run 83: a test ended with Enabled = 0 left in JWE3VR.ini, so the next start installed no hooks
+      (no screenshots; to_continue.sh stopped without clicking, as it should). to_continue.sh now switches
+      Enabled back on before starting the game, and says so.
+
 2026-10-27  0.0.15  The gunner's own model is hidden in the gun seats (remote runs 79-82, headset not worn)
     - In the gun seat the VR eye sits at the gun mount, where the gunner character is: their head, cap and rifle
       filled the view (run 78/79 screenshots). The game itself only hides entities for the first-person vehicle

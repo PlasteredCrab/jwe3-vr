@@ -14,8 +14,9 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > capture helicopter puts you in its seat in first person, the gun seat puts you at the gun mount (the gunner's
 > own model hidden), and the
 > virtual Xbox pad reaches the game (a scripted pad drove the jeep, lifted the helicopter off and entered both gun seats).
-> Not yet seen: head motion and stereo depth in a worn headset, the HUD panel itself in the headset, the VR
-> controllers, walking (guest view), and
+> The guest view (walking) puts the rig on the frame too, and a scripted stick walked it. Not yet seen: head motion
+> and stereo depth in a worn headset, the HUD panel itself in the headset, the VR controllers (so neither
+> head-yaw steering nor the on-foot tools), and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
@@ -250,7 +251,8 @@ The file is written with comments on first run. The ones you are most likely to 
   `re/remote/to_continue.sh` drives a full run into the last Sandbox save, `re/remote/to_menu.sh` stops at the main
   menu, and `re/remote/vehicle.sh <name> jeep|heli [x,y]` takes direct control of a response facility's jeep or
   helicopter (switching the mod off live while it clicks through the menus, so the UI is in the screenshots; the
-  facility is looked for in the view or given as x,y, `HERE=1` uses the park the game is already in), and
+  facility is looked for in the view or given as x,y, `HERE=1` uses the park the game is already in),
+  `re/remote/guest.sh <name> [x,y]` starts the guest view (walking) at a spot in the view, and
   `re/remote/reload.sh <name>` leaves the park to the main menu and loads it again. `JWE3VR_hud.req` saves the HUD texture
   (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
   target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).

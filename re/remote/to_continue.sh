@@ -11,6 +11,11 @@ if tasklist //FI "IMAGENAME eq JWE3.exe" 2>/dev/null | grep -qi jwe3.exe; then
 fi
 tasklist //FI "IMAGENAME eq JWE3.exe" 2>/dev/null | grep -qi jwe3.exe && { echo "would not close; stopping"; exit 1; }
 rm -f "$D/JWE3VR_pad.txt" "$D/JWE3VR_shot.req"
+# Enabled = 0 at startup installs no hooks (no screenshots, no clicks): a script stopped mid-way can leave it off.
+if grep -q "^Enabled = 0" "$D/JWE3VR.ini" 2>/dev/null; then
+  echo "JWE3VR.ini had Enabled = 0 (left by a stopped run); switching it back on"
+  sed -i "s/^Enabled = 0/Enabled = 1/" "$D/JWE3VR.ini"
+fi
 (cd "$P" && powershell -NoProfile -ExecutionPolicy Bypass -File deploy.ps1 -NoProxy 2>&1 | grep -E "installed|error")
 cmp -s "$P/native/JWE3VR/build/JWE3VR.dll" "$D/JWE3VR.dll" || { echo "deploy did not replace JWE3VR.dll; stopping"; exit 1; }
 old=$(head -n1 "$D/JWE3VR.log" 2>/dev/null)

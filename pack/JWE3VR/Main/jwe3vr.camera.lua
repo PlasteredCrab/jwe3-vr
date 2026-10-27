@@ -237,6 +237,19 @@ Camera.SetGunnerHidden = function(tWorld, nGunner)
                 (bOk and " hidden in the gun seat" or (" not hidden: " .. tostring(sErr))))
 end
 
+-- The camera manager sends its FOV only when it changes (each camera entity's tData.nFOVY holds the last one sent),
+-- so the headset FOV the rig wrote stayed on the flat screen after the VR view stopped (seen in game: the mod
+-- switched off live in the guest view kept the wide FOV). Resetting that cache, as the manager's own init does,
+-- makes it send its FOV again the next frame.
+Camera.RestoreGameFov = function(cmm)
+    local tEntities = cmm and cmm.tEntities
+    if global.type(tEntities) ~= "table" then return end
+    for _, tData in global.pairs(tEntities) do
+        if global.type(tData) == "table" then tData.nFOVY = -1 end
+    end
+    Bridge.Text("camera: the game's own FOV sent again (VR view off)")
+end
+
 Camera.ManagerTick = function(nDt, bFromInstance)
     if not Bridge.IsLoaded() then return end
     if not bFromInstance and Camera.nInstanceTicks ~= Camera.nInstanceSeen then
@@ -330,6 +343,7 @@ Camera.ManagerTick = function(nDt, bFromInstance)
     end
     Camera.SetGunnerHidden(tWorld, bOverride == 1 and nSeatGunner or nil)
     if bOverride ~= 1 then
+        if Camera.lastSet then Camera.RestoreGameFov(cmm) end -- the rig wrote the camera until now
         Camera.lastSet = nil
         return
     end
