@@ -3,6 +3,7 @@
 #include "log.h"
 #include "render.h"
 #include "rig.h"
+#include "viewcb.h"
 
 #include <cmath>
 #include <unordered_map>
@@ -512,36 +513,58 @@ void OnClearRtv(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE h) 
     if (LookupRtv(h, rt)) Trace('c', UiTextureIndex(rt.resource));
 }
 
-// ---------------------------------------------------------------- render-target census (debug)
-// One frame's render-target bindings are logged (resource, formats, how often bound, the state it leaves
-// RENDER_TARGET for); in the next frame each large target is copied out inside the game's own list just before
-// it leaves RENDER_TARGET (so its state is known) and saved a few seconds later as JWE3VR_rt<n>.bmp.
+// ---------------------------------------------------------------- resource census (debug)
+// JWE3VR_rt.req. Frame 1 (listing): every large texture (a quarter of the frame or more) the frame binds as a render
+// target, transitions or copies is logged with its formats and, in recording order, what happened to it:
+// B bound as a render target, W made a render target, U made a UAV, R made a shader resource, S / D made a copy
+// source / destination, P present or common, Z / z depth write / read, ? other. Copies between them are listed too.
+// Frame 2 (capturing): each one is copied out inside the game's list just before it first leaves RENDER_TARGET or
+// UNORDERED_ACCESS (its state is then known), and the copies are saved a few seconds later as JWE3VR_rt<n>.bmp.
+// Finds where the game draws something, and how it keeps temporal history, when it has no pass markers.
 
-struct CensusTarget {
+struct CensusEntry {
     ID3D12Resource* r = nullptr;
-    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; // view format
-    unsigned binds = 0, firstBind = 0;
-    unsigned leftTo = 0, leaves = 0;    // the state it left RENDER_TARGET for, and how often
-    ID3D12Resource* readback = nullptr; // never freed: a list holding the copy may still be in flight
+    DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN; // a render-target view format seen (else the resource's is used)
+    unsigned binds = 0;
+    std::string events;
+    ID3D12Resource* readback = nullptr;
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
 };
 enum class CensusStep { Off, Requested, Listing, Capturing, Saving };
 static std::mutex g_censusLock;
 static CensusStep g_censusStep = CensusStep::Off;
-static std::vector<CensusTarget> g_census;
-static unsigned g_censusBinds = 0, g_censusUnknown = 0;
+static std::vector<CensusEntry> g_census;
+static std::vector<std::pair<int, int>> g_censusCopies; // (source, destination) entry numbers
+static std::vector<ID3D12Resource*> g_censusOld;        // last census's readback buffers, freed at the next one
+static unsigned g_censusBinds = 0, g_censusUnknown = 0, g_censusCaptures = 0;
 static ULONGLONG g_censusSaveAt = 0;
 static std::atomic<bool> g_censusActive{false}; // Listing or Capturing (cheap check in the hooks)
+constexpr size_t kCensusMax = 96;
+constexpr unsigned kCensusMaxCaptures = 24;
 
 void RequestCensus() {
     std::lock_guard<std::mutex> l(g_censusLock);
     if (g_censusStep == CensusStep::Off) g_censusStep = CensusStep::Requested;
 }
 
-static CensusTarget* CensusFind(ID3D12Resource* r) { // caller holds g_censusLock
-    for (CensusTarget& t : g_census)
-        if (t.r == r) return &t;
-    return nullptr;
+// The entry of `r`, added if it is a large 2D texture (caller holds g_censusLock).
+static int CensusIndex(ID3D12Resource* r, bool add) {
+    if (!r) return -1;
+    for (size_t i = 0; i < g_census.size(); ++i)
+        if (g_census[i].r == r) return (int)i;
+    if (!add || g_census.size() >= kCensusMax) return -1;
+    D3D12_RESOURCE_DESC d = r->GetDesc();
+    FrameInfo f = Frame();
+    UINT64 fw = f.width ? f.width : 1920, fh = f.height ? f.height : 1080;
+    if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.Width * d.Height * 4 < fw * fh) return -1;
+    CensusEntry e;
+    e.r = r;
+    g_census.push_back(e);
+    return (int)g_census.size() - 1;
+}
+
+static void CensusEvent(int index, char what) {
+    if (index >= 0 && g_census[index].events.size() < 48) g_census[index].events += what;
 }
 
 static void CensusBind(UINT count, const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, BOOL single) {
@@ -551,33 +574,43 @@ static void CensusBind(UINT count, const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, BOOL
     std::lock_guard<std::mutex> l(g_censusLock);
     if (g_censusStep != CensusStep::Listing) return;
     for (UINT i = 0; i < count; ++i) {
-        D3D12_CPU_DESCRIPTOR_HANDLE h = single ? D3D12_CPU_DESCRIPTOR_HANDLE{rtvs[0].ptr + (SIZE_T)i * g_rtvIncrement} : rtvs[i];
         RtvInfo rt{};
-        if (!LookupRtv(h, rt)) {
+        if (!LookupRtv(HandleAt(rtvs, single, i), rt)) {
             ++g_censusUnknown;
             continue;
         }
-        CensusTarget* t = CensusFind(rt.resource);
-        if (!t) {
-            g_census.push_back({rt.resource, rt.format, 0, g_censusBinds});
-            t = &g_census.back();
-        }
-        ++t->binds;
         ++g_censusBinds;
+        int index = CensusIndex(rt.resource, true);
+        if (index < 0) continue;
+        g_census[index].view = rt.format;
+        ++g_census[index].binds;
+        CensusEvent(index, 'B');
     }
 }
 
-// Copies subresource 0 of `t` (now RENDER_TARGET) into a new readback buffer inside the game's list.
-static void CensusCapture(ID3D12GraphicsCommandList* list, CensusTarget& t) {
-    D3D12_RESOURCE_DESC d = t.r->GetDesc();
-    FrameInfo f = Frame();
-    if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.SampleDesc.Count != 1 || !render::DebugFormatSupported(t.format)) return;
-    if (d.Width * d.Height * 4 < (UINT64)f.width * f.height) return; // under a quarter of the frame
+static char StateLetter(D3D12_RESOURCE_STATES s) {
+    if (s == D3D12_RESOURCE_STATE_RENDER_TARGET) return 'W';
+    if (s == D3D12_RESOURCE_STATE_UNORDERED_ACCESS) return 'U';
+    if (s & (D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)) return 'R';
+    if (s == D3D12_RESOURCE_STATE_COPY_SOURCE) return 'S';
+    if (s == D3D12_RESOURCE_STATE_COPY_DEST) return 'D';
+    if (s == D3D12_RESOURCE_STATE_COMMON) return 'P'; // also PRESENT (same value)
+    if (s == D3D12_RESOURCE_STATE_DEPTH_WRITE) return 'Z';
+    if (s & D3D12_RESOURCE_STATE_DEPTH_READ) return 'z';
+    return '?';
+}
+
+// Copies subresource 0 of `e` (now in state `from`) into a new readback buffer inside the game's list.
+static void CensusCapture(ID3D12GraphicsCommandList* list, CensusEntry& e, D3D12_RESOURCE_STATES from) {
+    D3D12_RESOURCE_DESC d = e.r->GetDesc();
+    DXGI_FORMAT format = e.view != DXGI_FORMAT_UNKNOWN ? e.view : d.Format;
+    if (d.SampleDesc.Count != 1 || !render::DebugFormatSupported(format)) return;
     ID3D12Device* dev = render::Device();
     if (!dev || list->GetType() == D3D12_COMMAND_LIST_TYPE_COPY) return;
+    if (from == D3D12_RESOURCE_STATE_RENDER_TARGET && list->GetType() != D3D12_COMMAND_LIST_TYPE_DIRECT) return;
     UINT rows = 0;
     UINT64 rowSize = 0, total = 0;
-    dev->GetCopyableFootprints(&d, 0, 1, 0, &t.fp, &rows, &rowSize, &total);
+    dev->GetCopyableFootprints(&d, 0, 1, 0, &e.fp, &rows, &rowSize, &total);
     D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
     D3D12_RESOURCE_DESC bd{};
     bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
@@ -588,15 +621,16 @@ static void CensusCapture(ID3D12GraphicsCommandList* list, CensusTarget& t) {
     bd.SampleDesc.Count = 1;
     bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
-                                            IID_PPV_ARGS(&t.readback))))
+                                            IID_PPV_ARGS(&e.readback))))
         return;
+    ++g_censusCaptures;
     t_ours = true;
-    D3D12_RESOURCE_BARRIER b = render::Transition(t.r, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    D3D12_RESOURCE_BARRIER b = render::Transition(e.r, from, D3D12_RESOURCE_STATE_COPY_SOURCE);
     b.Transition.Subresource = 0;
     list->ResourceBarrier(1, &b);
-    D3D12_TEXTURE_COPY_LOCATION dst{t.readback, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
-    dst.PlacedFootprint = t.fp;
-    D3D12_TEXTURE_COPY_LOCATION src{t.r, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+    D3D12_TEXTURE_COPY_LOCATION dst{e.readback, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+    dst.PlacedFootprint = e.fp;
+    D3D12_TEXTURE_COPY_LOCATION src{e.r, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
     list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
     std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
     list->ResourceBarrier(1, &b);
@@ -608,17 +642,25 @@ static void CensusBarrier(ID3D12GraphicsCommandList* list, UINT count, const D3D
     for (UINT i = 0; i < count; ++i) {
         const D3D12_RESOURCE_BARRIER& x = b[i];
         if (x.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || x.Flags == D3D12_RESOURCE_BARRIER_FLAG_END_ONLY) continue;
-        if (x.Transition.StateBefore != D3D12_RESOURCE_STATE_RENDER_TARGET) continue;
-        CensusTarget* t = CensusFind(x.Transition.pResource);
-        if (!t) continue;
         if (g_censusStep == CensusStep::Listing) {
-            t->leftTo = (unsigned)x.Transition.StateAfter;
-            ++t->leaves;
-        } else if (g_censusStep == CensusStep::Capturing && !t->readback &&
-                   (x.Transition.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES || x.Transition.Subresource == 0)) {
-            CensusCapture(list, *t); // before the game's barrier: still RENDER_TARGET, drawing finished
+            CensusEvent(CensusIndex(x.Transition.pResource, true), StateLetter(x.Transition.StateAfter));
+            continue;
         }
+        if (g_censusStep != CensusStep::Capturing || g_censusCaptures >= kCensusMaxCaptures) continue;
+        D3D12_RESOURCE_STATES from = x.Transition.StateBefore;
+        if (from != D3D12_RESOURCE_STATE_RENDER_TARGET && from != D3D12_RESOURCE_STATE_UNORDERED_ACCESS) continue;
+        if (x.Transition.Subresource != D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES && x.Transition.Subresource != 0) continue;
+        int index = CensusIndex(x.Transition.pResource, false);
+        if (index >= 0 && !g_census[index].readback) CensusCapture(list, g_census[index], from); // written, not yet moved on
     }
+}
+
+void OnCopy(ID3D12GraphicsCommandList* list, ID3D12Resource* dst, ID3D12Resource* src) {
+    if (!g_censusActive.load() || t_ours) return;
+    std::lock_guard<std::mutex> l(g_censusLock);
+    if (g_censusStep != CensusStep::Listing || g_censusCopies.size() >= 32) return;
+    int s = CensusIndex(src, true), d = CensusIndex(dst, true);
+    if (s >= 0 || d >= 0) g_censusCopies.push_back({s, d});
 }
 
 // Advances the census one step per Present.
@@ -628,28 +670,28 @@ static void CensusAtPresent() {
     case CensusStep::Off:
         break;
     case CensusStep::Requested:
+        for (ID3D12Resource* r : g_censusOld) r->Release(); // the frame that used them finished long ago
+        g_censusOld.clear();
         g_census.clear();
-        g_censusBinds = g_censusUnknown = 0;
+        g_censusCopies.clear();
+        g_censusBinds = g_censusUnknown = g_censusCaptures = 0;
         g_censusStep = CensusStep::Listing;
         g_censusActive = true;
         break;
     case CensusStep::Listing: {
         ID3D12Resource* fin = g_finalTex.load();
-        if (fin) {
-            D3D12_RESOURCE_DESC d = fin->GetDesc();
-            LOGI("census: final image %p %llux%u format %d flags %#x", (void*)fin, (unsigned long long)d.Width, d.Height, (int)d.Format,
-                 (unsigned)d.Flags);
-        }
-        LOGI("census: %u render-target bindings in one frame (%u through views created before the mod loaded), %zu targets",
+        LOGI("census: %u render-target bindings in one frame (%u through views created before the mod loaded), %zu large "
+             "textures. Events: B bound, W render target, U UAV, R shader resource, S/D copy source/dest, P common, Z/z depth",
              g_censusBinds, g_censusUnknown, g_census.size());
-        int n = 0;
-        for (const CensusTarget& t : g_census) {
-            D3D12_RESOURCE_DESC d = t.r->GetDesc();
-            LOGI("census: #%d %p %llux%u view format %d (resource %d, mips %u, flags %#x): bound %u times from binding %u, leaves "
-                 "RENDER_TARGET %u times (last for %#x)%s",
-                 n++, (void*)t.r, (unsigned long long)d.Width, d.Height, (int)t.format, (int)d.Format, (unsigned)d.MipLevels,
-                 (unsigned)d.Flags, t.binds, t.firstBind, t.leaves, t.leftTo, t.r == fin ? " <- final image" : "");
+        for (size_t n = 0; n < g_census.size(); ++n) {
+            const CensusEntry& e = g_census[n];
+            D3D12_RESOURCE_DESC d = e.r->GetDesc();
+            int ui = UiTextureIndex(e.r);
+            LOGI("census: #%zu %p %llux%u format %d (view %d) mips %u flags %#x: %s%s%s", n, (void*)e.r, (unsigned long long)d.Width,
+                 d.Height, (int)d.Format, (int)e.view, (unsigned)d.MipLevels, (unsigned)d.Flags, e.events.empty() ? "-" : e.events.c_str(),
+                 e.r == fin ? "  <- final image" : "", ui >= 0 ? "  <- UI texture" : "");
         }
+        for (const auto& c : g_censusCopies) LOGI("census: copy #%d -> #%d", c.first, c.second);
         g_censusStep = CensusStep::Capturing;
         break;
     }
@@ -660,16 +702,20 @@ static void CensusAtPresent() {
         break;
     case CensusStep::Saving: {
         if (GetTickCount64() < g_censusSaveAt) break;
-        int n = 0, saved = 0;
-        for (const CensusTarget& t : g_census) {
-            int index = n++;
-            if (!t.readback) continue;
+        int saved = 0;
+        for (size_t n = 0; n < g_census.size(); ++n) {
+            CensusEntry& e = g_census[n];
+            if (!e.readback) continue;
             wchar_t file[64];
-            swprintf(file, 64, L"JWE3VR_rt%d.bmp", index);
-            D3D12_RESOURCE_DESC d = t.r->GetDesc();
-            if (render::SaveReadbackBmp(t.readback, t.fp, t.format, (UINT)d.Width, d.Height, file)) ++saved;
+            swprintf(file, 64, L"JWE3VR_rt%zu.bmp", n);
+            D3D12_RESOURCE_DESC d = e.r->GetDesc();
+            if (render::SaveReadbackBmp(e.readback, e.fp, e.view != DXGI_FORMAT_UNKNOWN ? e.view : d.Format, (UINT)d.Width, d.Height,
+                                        file))
+                ++saved;
+            g_censusOld.push_back(e.readback);
+            e.readback = nullptr;
         }
-        LOGI("census: saved %d render-target captures as JWE3VR_rt<n>.bmp (n = census number)", saved);
+        LOGI("census: saved %d captures as JWE3VR_rt<n>.bmp (n = census number)", saved);
         g_censusStep = CensusStep::Off;
         break;
     }
@@ -764,9 +810,11 @@ static D3D12_RESOURCE_STATES KnownState(ID3D12Resource* r, bool& known) {
     return s;
 }
 
+// Per-eye history is only right together with the previous-camera fix (viewcb): without it the game would
+// reproject this eye's history from the other eye's position.
 static bool TaaWanted(const FrameInfo& f) {
     const Settings& c = config::Get();
-    return c.enabled && c.perEyeTaa && f.aer && f.immersive;
+    return c.enabled && c.perEyeTaa && f.aer && f.immersive && viewcb::CameraRowsKnown();
 }
 
 static bool SameShape(ID3D12Resource* a, ID3D12Resource* b) {

@@ -333,11 +333,24 @@ static float HalfToFloat(uint16_t h) {
 
 static uint8_t Unit8(float v) { return (uint8_t)(v <= 0.f ? 0 : v >= 1.f ? 255 : v * 255.f + 0.5f); }
 
+// HDR values for a look at the texture: Reinhard, then gamma 2.2.
+static uint8_t Hdr8(float v) { return v <= 0.f ? 0 : Unit8(std::pow(v / (1.f + v), 1.f / 2.2f)); }
+
+// 11- and 10-bit unsigned floats (R11G11B10): 6 / 5 mantissa bits, 5 exponent bits, bias 15.
+static float SmallFloat(uint32_t bits, int mantissaBits) {
+    uint32_t m = bits & ((1u << mantissaBits) - 1), e = (bits >> mantissaBits) & 0x1F;
+    float frac = (float)m / (float)(1u << mantissaBits);
+    if (e == 0) return frac * std::ldexp(1.f, -14);
+    if (e == 31) return 65504.f;
+    return (1.f + frac) * std::ldexp(1.f, (int)e - 15);
+}
+
 // One texel of the formats the debug BMPs understand (false: not supported).
 static bool DecodeTexel(DXGI_FORMAT f, const uint8_t* px, uint8_t& r, uint8_t& g, uint8_t& b) {
     uint32_t v;
     memcpy(&v, px, 4);
     switch (f) {
+    case DXGI_FORMAT_R10G10B10A2_TYPELESS:
     case DXGI_FORMAT_R10G10B10A2_UNORM:
         r = (uint8_t)((v & 0x3FF) >> 2), g = (uint8_t)(((v >> 10) & 0x3FF) >> 2), b = (uint8_t)(((v >> 20) & 0x3FF) >> 2);
         return true;
@@ -351,18 +364,24 @@ static bool DecodeTexel(DXGI_FORMAT f, const uint8_t* px, uint8_t& r, uint8_t& g
     case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
         b = (uint8_t)v, g = (uint8_t)(v >> 8), r = (uint8_t)(v >> 16);
         return true;
+    case DXGI_FORMAT_R16G16B16A16_TYPELESS:
     case DXGI_FORMAT_R16G16B16A16_FLOAT: {
         uint16_t h[3];
         memcpy(h, px, 6);
-        r = Unit8(HalfToFloat(h[0])), g = Unit8(HalfToFloat(h[1])), b = Unit8(HalfToFloat(h[2]));
+        r = Hdr8(HalfToFloat(h[0])), g = Hdr8(HalfToFloat(h[1])), b = Hdr8(HalfToFloat(h[2]));
         return true;
     }
+    case DXGI_FORMAT_R11G11B10_FLOAT:
+        r = Hdr8(SmallFloat(v & 0x7FF, 6)), g = Hdr8(SmallFloat((v >> 11) & 0x7FF, 6)), b = Hdr8(SmallFloat(v >> 22, 5));
+        return true;
     default:
         return false;
     }
 }
 
-static UINT TexelBytes(DXGI_FORMAT f) { return f == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4; }
+static UINT TexelBytes(DXGI_FORMAT f) {
+    return f == DXGI_FORMAT_R16G16B16A16_FLOAT || f == DXGI_FORMAT_R16G16B16A16_TYPELESS ? 8 : 4;
+}
 
 bool DebugFormatSupported(DXGI_FORMAT f) {
     uint8_t px[8]{}, r, g, b;
@@ -506,6 +525,11 @@ static void OnPresent(IDXGISwapChain* sc) {
                 DebugDump(hud, D3D12_RESOURCE_STATE_RENDER_TARGET, L"JWE3VR_hud.bmp", inFlight);
             else
                 LOGW("debug: no HUD texture (WorldHud off or not immersive)");
+        }
+        std::wstring scanReq = ModuleDir() + L"JWE3VR_cbscan.req";
+        if (GetFileAttributesW(scanReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileW(scanReq.c_str());
+            viewcb::RequestScan();
         }
         // JWE3VR_rt.req: log the render targets of a frame and save each large one (finding the UI target).
         std::wstring rtReq = ModuleDir() + L"JWE3VR_rt.req";
@@ -729,6 +753,9 @@ static void STDMETHODCALLTYPE Hk_CopyRegion(ID3D12GraphicsCommandList* l, const 
         ++g_statCopyToBb;
         if (src) passes::OnCopyToBackbuffer(src->pResource);
     }
+    if (l != g_copyList && dst && src && src->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX &&
+        dst->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX)
+        passes::OnCopy(l, dst->pResource, src->pResource);
     o_CopyRegion(l, dst, x, y, z, src, box);
 }
 
@@ -737,6 +764,7 @@ static void STDMETHODCALLTYPE Hk_CopyResource(ID3D12GraphicsCommandList* l, ID3D
         ++g_statCopyToBb;
         passes::OnCopyToBackbuffer(src);
     }
+    if (l != g_copyList) passes::OnCopy(l, dst, src);
     o_CopyResource(l, dst, src);
 }
 

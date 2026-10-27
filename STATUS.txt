@@ -1,6 +1,24 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.6  Per-eye TAA and sync stereo: blocked on the no-proxy install (remote runs 27-36, headset not worn)
+    - Census extended to every large texture (events per frame: bound, render target, UAV, read, copy) and copies
+      between them. Run 27: 60 textures; the TAA history is a ping-pong pair of 1920x1080 RGBA16 textures (one only
+      read, the other only written each frame; #48 is the smoothed scene). Further pairs (R16G16, R32G32, R8, a
+      half-res R11G11B10) look like other temporal effects. So same-eye history would need just one copy per frame.
+    - But same-eye history is only right if the game also reprojects from that eye's previous camera, which means
+      patching the view constant buffer - and it cannot be found: 392 root CBVs per scan, none in memory the mod
+      knows, because the game mapped its upload rings before the late-loaded mod hooked Map. Tried: a
+      GetGPUVirtualAddress hook (the game asks only ~2500 times, never for the rings; removed again), and a scan of
+      the process memory for the camera position (new debug aid JWE3VR_cbscan.req): none in 3 GB of write-combined
+      memory; 20-40 hits in cached memory, but none spaced like the bound CBVs (no ring signature), so they look
+      like CPU-side copies (transforms: position + quaternion, eye and head centre 1.9 m apart = IPD x overview scale).
+    - Now: discovery gives up after 20 blind scans and says why ("Discovery stopped"), and stops recording root CBVs
+      (a lock per bind on the game's render threads); per-eye TAA runs only once the view CB is known (otherwise it
+      would reproject wrongly), so on this install TAA keeps its one shared history. With version.dll (machines
+      without Sophos) discovery sees the maps from the start - untested on JWE3.
+    - Run 36: in-world HUD still clean (re/work/run36_pair.png), discovery stop logged, no other warnings.
+
 2026-10-27  0.0.5  In-world HUD without pass markers: the UI leaves the eye images (remote test, headset not worn)
     - How JWE3 composes a frame (runs 19-25): the backbuffer is never a render target (2 barriers, 1 copy per frame);
       the game copies a 1920x1080 R10G10B10A2 image into it, and that image is written by a compute pass (only ever

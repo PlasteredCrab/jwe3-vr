@@ -4,12 +4,14 @@
 #include "passes.h"
 #include "render.h"
 
+#include <algorithm>
 #include <condition_variable>
 #include <deque>
 #include <map>
 #include <set>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace jvr::viewcb {
 
@@ -42,6 +44,10 @@ static std::deque<Target> g_targets;
 
 // Discovery result
 static int g_posRow = -1; // float4 row holding the camera position
+// Discovery stops when the bound constant buffers are in memory the mod cannot see: with a late load (no proxy DLL)
+// the game mapped its upload rings before the Map hook existed. JWE3 run 28: 392 root CBVs, none in known memory.
+static std::atomic<bool> g_unreachable{false};
+static int g_blindScans = 0;
 static int g_frames = 0;
 static bool g_layoutLogged = false;
 static std::set<std::string> g_markersSeen;
@@ -68,8 +74,11 @@ static bool g_haveLastRun = false;
 // needed: until the view CB has been found (discovery), in sync mode, or while dumping markers.
 static bool Active() {
     const Settings& c = config::Get();
-    return c.enabled && (c.stereo == StereoMode::Sync || c.markerDump || (c.syncDiscovery && g_posRow < 0) ||
-                         (c.stereo == StereoMode::AER && c.perEyeTaa)); // per-eye TAA patches the previous-camera row
+    if (!c.enabled) return false;
+    if (c.markerDump) return true;
+    if (g_unreachable.load()) return false;
+    return c.stereo == StereoMode::Sync || (c.syncDiscovery && g_posRow < 0) ||
+           (c.stereo == StereoMode::AER && c.perEyeTaa); // per-eye TAA patches the previous-camera row
 }
 
 void OnCommandListReset(ID3D12GraphicsCommandList* list) {
@@ -191,6 +200,154 @@ static bool SafeWrite(void* dst, const void* src, size_t n) {
     }
 }
 
+// Debug (JWE3VR_cbscan.req): searches large read-write memory regions (upload heaps are mapped write-combined or
+// cached) for the camera position, as a float3 or as a matrix's translation column, to find constant buffers the
+// game mapped before the mod loaded. Runs on its own thread. Logs the regions and the first hits.
+static std::atomic<bool> g_scanning{false};
+
+static const char* MemType(DWORD t) { return t == MEM_PRIVATE ? "private" : t == MEM_MAPPED ? "mapped" : t == MEM_IMAGE ? "image" : "?"; }
+
+static void ScanMain(Vec3 cam, std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vas) {
+    ULONGLONG start = GetTickCount64();
+    struct Region {
+        uint8_t* base;
+        size_t size;
+        DWORD protect, type;
+        void* allocBase;
+    };
+    std::vector<Region> regions;
+    size_t total = 0, wcBytes = 0;
+    MEMORY_BASIC_INFORMATION mbi;
+    uint8_t* p = nullptr;
+    while (VirtualQuery(p, &mbi, sizeof(mbi)) == sizeof(mbi)) {
+        DWORD prot = mbi.Protect & ~(PAGE_WRITECOMBINE | PAGE_NOCACHE);
+        bool rw = mbi.State == MEM_COMMIT && prot == PAGE_READWRITE && !(mbi.Protect & PAGE_GUARD) && mbi.Type != MEM_IMAGE;
+        // Rings of constant buffers are large; small read-write regions are mostly heap and stacks.
+        if (rw && mbi.RegionSize >= (1u << 20)) {
+            regions.push_back({(uint8_t*)mbi.BaseAddress, mbi.RegionSize, mbi.Protect, mbi.Type, mbi.AllocationBase});
+            total += mbi.RegionSize;
+            if (mbi.Protect & PAGE_WRITECOMBINE) wcBytes += mbi.RegionSize;
+        }
+        uint8_t* next = (uint8_t*)mbi.BaseAddress + mbi.RegionSize;
+        if (next <= p) break;
+        p = next;
+    }
+    LOGI("cb scan: %zu read-write regions of 1 MB or more, %.1f MB (%.1f MB write-combined); camera %.3f %.3f %.3f",
+         regions.size(), total / 1048576.0, wcBytes / 1048576.0, cam.x, cam.y, cam.z);
+    {
+        AcquireSRWLockShared(&g_mapLock);
+        int n = 0;
+        for (auto& [va, m] : g_maps) {
+            MEMORY_BASIC_INFORMATION q{};
+            if (n++ < 12 && VirtualQuery(m.cpu, &q, sizeof(q)))
+                LOGI("cb scan: known upload mapping va %llx size %llu cpu %p: protect %#x %s, allocation %p", (unsigned long long)va,
+                     (unsigned long long)m.size, (void*)m.cpu, (unsigned)q.Protect, MemType(q.Type), q.AllocationBase);
+        }
+        ReleaseSRWLockShared(&g_mapLock);
+    }
+    if (!vas.empty()) {
+        std::sort(vas.begin(), vas.end());
+        LOGI("cb scan: %zu root CBV addresses this frame, %llx .. %llx", vas.size(), (unsigned long long)vas.front(),
+             (unsigned long long)vas.back());
+    }
+    float eps = std::max(0.02f, Length(cam) * 2e-5f);
+    auto isNear = [&](float v, float want) { return std::fabs(v - want) < eps; }; // NaN: false
+    std::vector<float> buf(1 << 18);                                           // 1 MB
+    int hits = 0;
+    struct Hit {
+        uint8_t* at;
+        void* alloc;
+    };
+    std::vector<Hit> found;
+    for (const Region& r : regions) {
+        int regionHits = 0;
+        for (size_t off = 0; off < r.size && hits < 80 && regionHits < 8; off += buf.size() * 4) {
+            size_t n = std::min(buf.size() * 4, r.size - off);
+            if (!SafeRead(r.base + off, buf.data(), n)) break;
+            size_t count = n / 4;
+            for (size_t i = 0; i + 8 < count && hits < 80 && regionHits < 8; ++i) {
+                if (!isNear(buf[i], cam.x)) continue;
+                const char* kind = nullptr;
+                if (isNear(buf[i + 1], cam.y) && isNear(buf[i + 2], cam.z)) kind = "float3";
+                else if (isNear(buf[i + 4], cam.y) && isNear(buf[i + 8], cam.z)) kind = "matrix column (16-byte stride)";
+                if (!kind) continue;
+                uint8_t* at = r.base + off + i * 4;
+                size_t row0 = i & ~(size_t)3;
+                ++hits;
+                ++regionHits;
+                LOGI("cb scan: hit %d (%s) at %p, region %p+%zu (%s, protect %#x, allocation %p), offset %llx: row %.3f %.3f %.3f %.3f",
+                     hits, kind, (void*)at, (void*)r.base, r.size, MemType(r.type), (unsigned)r.protect, r.allocBase,
+                     (unsigned long long)(at - r.base), buf[row0], buf[row0 + 1], buf[row0 + 2], buf[row0 + 3]);
+                found.push_back({at, r.allocBase});
+                if (regionHits == 1) {
+                    // What surrounds the first hit of a region (two rows before, six after).
+                    for (int k = -2; k <= 6; ++k) {
+                        long long j = (long long)row0 + 4 * k;
+                        if (j < 0 || j + 3 >= (long long)count) continue;
+                        LOGI("cb scan:     row %+d: % .4f % .4f % .4f % .4f", k, buf[j], buf[j + 1], buf[j + 2], buf[j + 3]);
+                    }
+                }
+            }
+        }
+    }
+    // A ring of constant buffers holding the camera: for every hit in that allocation, hit address - some bound root
+    // CBV address is the same value (the ring's CPU - GPU offset plus the camera's offset in its buffer).
+    std::map<void*, std::vector<uint8_t*>> byAlloc;
+    for (const Hit& h : found) byAlloc[h.alloc].push_back(h.at);
+    int rings = 0;
+    for (auto& [alloc, list] : byAlloc) {
+        if (list.size() < 3) continue;
+        std::unordered_map<long long, int> votes;
+        for (uint8_t* c : list) {
+            std::unordered_set<long long> mine;
+            for (D3D12_GPU_VIRTUAL_ADDRESS v : vas)
+                if (mine.insert((long long)((uintptr_t)c - v)).second) ++votes[(long long)((uintptr_t)c - v)];
+        }
+        long long best = 0;
+        int count = 0;
+        for (auto& [x, n] : votes)
+            if (n > count) best = x, count = n;
+        LOGI("cb scan: allocation %p: %zu hits, best CPU - GPU offset %llx shared by %d of them", alloc, list.size(),
+             (unsigned long long)best, count);
+        if (count < 3 || rings++ > 0) continue;
+        // Dump the buffer around the first hit that votes for it.
+        for (uint8_t* c : list) {
+            D3D12_GPU_VIRTUAL_ADDRESS va = (D3D12_GPU_VIRTUAL_ADDRESS)((uintptr_t)c - best);
+            if (!std::binary_search(vas.begin(), vas.end(), va)) continue;
+            float rows[48 * 4];
+            uint8_t* from = c - 16 * 16;
+            if (!SafeRead(from, rows, sizeof(rows))) break;
+            LOGI("cb scan: ring buffer bound at %llx, camera at CPU %p; rows -16..+31 around it:", (unsigned long long)va, (void*)c);
+            for (int k = 0; k < 48; ++k)
+                LOGI("cb scan:   %+3d: % .5f % .5f % .5f % .5f", k - 16, rows[k * 4], rows[k * 4 + 1], rows[k * 4 + 2], rows[k * 4 + 3]);
+            break;
+        }
+    }
+    LOGI("cb scan: done in %.1f s, %d hits, %d ring candidates", (GetTickCount64() - start) / 1000.0, hits, rings);
+    g_scanning = false;
+}
+
+void RequestScan() {
+    if (g_scanning.exchange(true)) return;
+    Vec3 cam{};
+    {
+        std::lock_guard<std::mutex> l(g_targetLock);
+        if (g_targets.empty()) {
+            g_scanning = false;
+            LOGW("cb scan: no camera yet");
+            return;
+        }
+        cam = g_targets.front().centre;
+    }
+    std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vas;
+    AcquireSRWLockShared(&g_listLock);
+    for (auto& [l, li] : g_lists)
+        for (D3D12_GPU_VIRTUAL_ADDRESS va : li.cbvs)
+            if (vas.size() < 20000) vas.push_back(va);
+    ReleaseSRWLockShared(&g_listLock);
+    std::thread(ScanMain, cam, std::move(vas)).detach();
+}
+
 static int MatchTarget(const float* v, const std::vector<Target>& targets) {
     for (size_t i = 0; i < targets.size(); ++i) {
         Vec3 p = targets[i].centre;
@@ -215,10 +372,13 @@ static std::vector<uint8_t*> FindViewRows(UINT count, ID3D12CommandList* const* 
     ReleaseSRWLockShared(&g_listLock);
 
     std::set<uint8_t*> seen;
+    size_t nCbvs = 0, nMapped = 0;
     for (auto& [li, vas] : cbvs) {
         for (D3D12_GPU_VIRTUAL_ADDRESS va : vas) {
             UINT64 avail = 0;
             uint8_t* cpu = CpuOf(va, avail);
+            ++nCbvs;
+            if (cpu) ++nMapped;
             if (!cpu || avail < 64) continue;
             int found = -1, which = -1;
             if (g_posRow >= 0) {
@@ -255,6 +415,22 @@ static std::vector<uint8_t*> FindViewRows(UINT count, ID3D12CommandList* const* 
             uint8_t* rowPtr = cpu + (size_t)found * 16;
             if (seen.insert(rowPtr).second) rows.push_back(rowPtr);
         }
+    }
+    if (g_posRow < 0) {
+        // Discovery diagnostics (every 10th scan): are root CBVs bound at all, and is their memory visible to us?
+        static int scans = 0;
+        if (scans++ % 10 == 0) {
+            AcquireSRWLockShared(&g_mapLock);
+            size_t maps = g_maps.size();
+            ReleaseSRWLockShared(&g_mapLock);
+            const Vec3& p = targets.front().centre;
+            LOGI("view CB discovery: %u lists, %zu root CBVs, %zu in mapped memory (%zu mapped buffers known); camera %.2f %.2f %.2f",
+                 count, nCbvs, nMapped, maps, p.x, p.y, p.z);
+        }
+        // Many root CBVs, none of them in memory we know: they never will be (mapped before the mod loaded).
+        if (nCbvs >= 64 && nMapped == 0 && ++g_blindScans >= 20 && !g_unreachable.exchange(true))
+            LOGW("view CB discovery: the game's constant buffers are in memory mapped before the mod loaded (install without "
+                 "version.dll); sync stereo and the per-eye TAA camera fix are unavailable. Discovery stopped.");
     }
     return rows;
 }
@@ -388,6 +564,8 @@ bool OnExecute(ID3D12CommandQueue* q, UINT count, ID3D12CommandList* const* list
     g_haveLastRun = true;
     return true;
 }
+
+bool CameraRowsKnown() { return g_posRow >= 0 && !g_unreachable.load(); }
 
 bool TakeLeftCaptured() {
     bool v = g_leftCaptured;

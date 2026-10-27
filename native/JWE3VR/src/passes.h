@@ -60,9 +60,11 @@ void OnBarrier(ID3D12GraphicsCommandList* list, UINT count, const D3D12_RESOURCE
 // A render-target clear (traced for UI textures; the clear itself is left alone).
 void OnClearRtv(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE view);
 
-// Debug (JWE3VR_rt.req): log the render targets the next frame binds, then save each large one as
-// JWE3VR_rt<n>.bmp, captured inside the game's list just before it stops being a render target.
+// Debug (JWE3VR_rt.req): log what the next frame does with each large texture (bindings, states, copies), then
+// save each one as JWE3VR_rt<n>.bmp, captured inside the game's list just after it was written.
 void RequestCensus();
+// A game copy between resources (whole resource or one subresource), for the census.
+void OnCopy(ID3D12GraphicsCommandList* list, ID3D12Resource* dst, ID3D12Resource* src);
 
 // Shared helper: does `name` contain any comma-separated key of `keys`?
 bool MarkerMatches(const std::string& name, const std::string& keys);

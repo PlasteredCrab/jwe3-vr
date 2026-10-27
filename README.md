@@ -12,7 +12,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on), and the game's UI is moved
 > out of the eye images into the in-world HUD panel's texture. Not yet seen: head motion and stereo depth in a worn
 > headset, the HUD panel itself in the headset, controllers, the camera mode per game mode (walking/vehicles), and
-> per-eye TAA (retail JWE3 has no render-pass markers). Features below describe what the code does; see
+> per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
+> version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
 
 ## Features
@@ -123,7 +124,7 @@ Nothing below has been confirmed at runtime.
 | On-foot tools | `Tranquillise`, `IsDiseased`, `RemoveDisease`, `GetApproxNumDartsToCure` / `ToTreat` present; no `...ToTranquillise` | None (falls back to 3 darts) |
 | Cursor ray | `Helpers.RaycastUtils` still calls `api.input.GetMouseRay` | None |
 | UI renderer | Coherent Gameface (`cohtml`, Renoir). The UI goes into two 1920x1080 RGBA8 textures used in turn (drawn through sRGB and UNORM views, cleared the frame after), copied out of RENDER_TARGET and composited by a compute pass into a 10-bit image that is copied into the backbuffer (which is never a render target) | New `UIDetect = texture` (default): learns those textures from their RENDER_TARGET -> COPY_SOURCE transition and redirects their bindings; the HUD panel gets its own RGBA8 sRGB swapchain |
-| Render passes | 60 named nodes; TAA, shadow, environment capture, skinning and height-variance passes match the marker defaults | None |
+| Render passes | 60 named nodes in the data, but retail emits no pass markers. TAA keeps its history in a ping-pong pair of 1920x1080 RGBA16 textures (run 27 census) | Per-eye TAA and sync stereo also need the view CB: with a late load (no version.dll) its upload ring was mapped before the Map hook, so neither runs (the log says so) |
 | New JWE3 gameplay | Player-controllable aviary drones (with drone gun cameras), drone tranquillise tasks, monorail, underwater lagoon placement | Not covered yet (Phases 5 and 7) |
 
 ## Build
@@ -206,12 +207,15 @@ The file is written with comments on first run. The ones you are most likely to 
   `re/remote/to_continue.sh` drives a full run into the last Sandbox save. `JWE3VR_hud.req` saves the HUD texture
   (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
   target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).
+  `JWE3VR_cbscan.req` searches the game's large read-write memory for the camera position (constant-buffer hunting).
 - **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
   panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`
   to see which render target holds the UI; until then the tablet shows the HUD.
 - **Blurry edges:** lower foveation (`FoveaInnerDeg` up, or `Foveation = 0`). "foveation: VRS tier 2" in the log
   confirms your GPU supports it.
-- **Smearing in alternate-eye mode:** look for "per-eye TAA: TAA output ... found"; if missing, tune `TAAMarkers`
+- **Smearing in alternate-eye mode:** per-eye TAA needs the view CB. "view CB discovery: ... Discovery stopped" in the
+  log means the install without version.dll hides it; TAA then keeps one shared history (softer edges while the head
+  moves). Otherwise look for "per-eye TAA: TAA output ... found"; if missing, tune `TAAMarkers`
   with `MarkerDump`. DLSS keeps one history; use the game's TAA instead.
 - **Edges pop when turning your head fast:** raise `CullMarginDeg`.
 - **Gun aims the wrong way or oscillates:** lower `GunnerAimGain`. The stick direction is learned automatically within a second.

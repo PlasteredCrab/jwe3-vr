@@ -32,7 +32,11 @@ bool OnExecute(ID3D12CommandQueue* queue, UINT count, ID3D12CommandList* const* 
 
 // Present: true if sync replay captured the left eye this frame (the right eye is the backbuffer).
 bool TakeLeftCaptured();
+// The view CB's camera row has been found (sync replay and the per-eye TAA camera fix can run).
+bool CameraRowsKnown();
 void OnPresent();
+// Debug (JWE3VR_cbscan.req): search write-combined memory for the camera position (background thread, logs hits).
+void RequestScan();
 
 // Lua told us where the game camera is this tick (discovery target).
 // eye: AER eye (0/1) whose position `centrePos` is, or -1 for a centre camera (mono / sync).
