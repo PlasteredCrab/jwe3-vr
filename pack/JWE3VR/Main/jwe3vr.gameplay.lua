@@ -95,16 +95,22 @@ end
 -- when _tInitData.StartInFirstPerson is set and the vehicle can switch camera; ask for that in VR.
 -- The player-facing UI mode decides the rig kind on JWE3: the camera component runs in a Lua state the mod
 -- cannot reach, but UI modes are Lua objects in ours (their TransitionIn/Out are looked up on the module).
+-- Their transitions run as coroutines (TransitionIn waits for the vehicle), so the log shows another lua_State
+-- pointer for them; it is a thread of the same state (seen in game: the manager sees sUIMode).
 -- Tag -> camera mode name (Camera.tModeKinds); nil = whatever the camera manager reports.
 Gameplay.sUIMode = nil
 Gameplay.tUIModeCamera = {drive = "FirstPersonVehicle", gunner = "Gunner", photo = "FirstPersonVehicle",
                           guest = "Guest", cinematic = "Animated"}
 
-local SetUIMode = function(sTag, bOn)
+Gameplay.oUIMode = nil -- the active UI mode object (its nVehicleEntityID is the vehicle being driven)
+
+local SetUIMode = function(sTag, bOn, self)
     if bOn then
         Gameplay.sUIMode = sTag
+        Gameplay.oUIMode = self
     elseif Gameplay.sUIMode == sTag then
         Gameplay.sUIMode = nil
+        Gameplay.oUIMode = nil
     end
     Bridge.Text("ui mode " .. sTag .. (bOn and " in" or " out"))
 end
@@ -117,11 +123,11 @@ Gameplay.PatchUIMode = function(tModule, sTag, fnBeforeIn)
     tModule.__JWE3VRUIPatched = true
     tModule.TransitionIn = function(self, ...)
         if fnBeforeIn then pcall(fnBeforeIn, self, ...) end
-        pcall(SetUIMode, sTag, true)
+        pcall(SetUIMode, sTag, true, self)
         return fnIn(self, ...)
     end
     tModule.TransitionOut = function(self, ...)
-        pcall(SetUIMode, sTag, false)
+        pcall(SetUIMode, sTag, false, self)
         return fnOut(self, ...)
     end
 end
@@ -189,12 +195,12 @@ Gameplay.PatchGunnerMode = function(tModule)
     local fnIn, fnOut = tModule.TransitionIn, tModule.TransitionOut
     tModule.TransitionIn = function(self, ...)
         Gameplay.oGunnerMode = self
-        pcall(SetUIMode, "gunner", true)
+        pcall(SetUIMode, "gunner", true, self)
         return fnIn(self, ...)
     end
     tModule.TransitionOut = function(self, ...)
         if Gameplay.oGunnerMode == self then Gameplay.oGunnerMode = nil end
-        pcall(SetUIMode, "gunner", false)
+        pcall(SetUIMode, "gunner", false, self)
         return fnOut(self, ...)
     end
 end
@@ -204,6 +210,12 @@ Gameplay.GunnerIDs = function()
     local oMode = Gameplay.oGunnerMode
     if not oMode then return nil, nil end
     return oMode.nVehicleEntityID or oMode.vehicle, oMode.nGunnerEntityID
+end
+
+-- The vehicle of the active drive / gun seat / photo mode, or nil.
+Gameplay.ActiveVehicle = function()
+    local oMode = Gameplay.oUIMode
+    return global.type(oMode) == "table" and oMode.nVehicleEntityID or nil
 end
 
 Gameplay.SwitchAmmo = function(bNext)

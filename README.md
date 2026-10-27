@@ -9,9 +9,10 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
 > **Status: first runs in JWE3 (game 1.5.5, build 1792088119), headset not worn.** Seen working in the game: the
 > mod loads without a proxy DLL, the Lua bridge and hooks run, OpenXR starts on SteamVR, and in a Sandbox park the
-> VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on), and the game's UI is moved
-> out of the eye images into the in-world HUD panel's texture. Not yet seen: head motion and stereo depth in a worn
-> headset, the HUD panel itself in the headset, controllers, the camera mode per game mode (walking/vehicles), and
+> VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on), the game's UI is moved
+> out of the eye images into the in-world HUD panel's texture, and taking direct control of a ranger jeep or the
+> capture helicopter puts you in its seat in first person. Not yet seen: head motion and stereo depth in a worn
+> headset, the HUD panel itself in the headset, controllers, driving or flying, walking (guest view), and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
@@ -27,6 +28,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - True world scale in metres: walking and vehicles are 1:1, the park overview is a 1:30 model you can grab,
   scale and rotate.
 - Menus, loading screens and cutscenes on a large flat screen in front of you.
+- Vehicles in first person: jeeps start in the driver's seat, and helicopters (third-person only in JWE3) are
+  switched to their own seat camera, so you sit in the vehicle instead of floating behind it.
 - In-world HUD: the game's UI is drawn as a floating panel below eye level that follows you lazily, instead of
   being painted flat onto both eyes. You point at it to click. The mod finds the textures JWE3 draws its UI into
   by itself (no render-pass markers needed). (Falls back to the tablet if the UI can't be captured.)
@@ -36,7 +39,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - One culling pass for both eyes (a single wide view that covers both).
 - Fixed foveated rendering (variable rate shading): full detail where you look, coarser toward the edges of
   each eye. Needs a GPU with VRS tier 2 (NVIDIA RTX 20 or newer, AMD RX 6000 or newer, Intel Arc).
-- Separate TAA history per eye, so neither eye smears in the other's image.
+- Separate TAA history per eye, so neither eye smears in the other's image (needs the `version.dll` install,
+  see Troubleshooting).
 - In the experimental both-eyes mode, shadows, GI and skinning run once for both eyes.
 - V-sync is forced off while the headset paces the game.
 
@@ -228,7 +232,9 @@ The file is written with comments on first run. The ones you are most likely to 
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), `FOCUS`, keys and pad buttons (format in `input.cpp`). The game reads
   no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).
-  `re/remote/to_continue.sh` drives a full run into the last Sandbox save. `JWE3VR_hud.req` saves the HUD texture
+  `re/remote/to_continue.sh` drives a full run into the last Sandbox save, `re/remote/to_menu.sh` stops at the main
+  menu, and `re/remote/vehicle.sh <name> jeep|heli` takes direct control of a response facility's jeep or helicopter
+  (switching the mod off live while it clicks through the menus, so the UI is in the screenshots). `JWE3VR_hud.req` saves the HUD texture
   (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
   target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).
   `JWE3VR_cbscan.req` searches the game's large read-write memory for the camera position (constant-buffer hunting).

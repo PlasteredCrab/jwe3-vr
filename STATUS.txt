@@ -1,6 +1,31 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.8  Vehicle seats in first person: jeep and capture helicopter (remote runs 38-46, headset not worn)
+    - Frame rate A/B (run 38): park at 2-3 fps with the mod on and with it switched off live (Enabled = 0, the game's
+      own camera and UI back in the frame), so the low rate is the remote session, not the mod.
+    - Built a Response Facility in the Sandbox test park (remote clicks, each step checked on a screenshot) and took
+      DIRECT CONTROL of its vehicles; re/remote/vehicle.sh now does the whole run (to_menu.sh: to the menu only).
+    - Jeep (runs 42-44): the drive-mode patch's StartInFirstPerson works - the game goes straight to its
+      FirstPersonVehicle camera and the rig sits in the driver's seat (re/work/run42_jeep2.png: wheel and dashboard,
+      level horizon, headset FOV, no UI on the frame). Log: "ui mode drive in", "camera mode FirstPersonVehicle (rig
+      kind 3, ui mode drive, game camera FirstPersonVehicle)".
+    - Bug found: the camera code looked the gameplay module up as package.loaded["JWE3VR.Gameplay"], which is nil in
+      game, so the UI mode (and the gun-seat ids) never reached the camera ("ui mode nil"). Now a lazy require.
+      (Side finding: UI-mode transitions run as coroutines - TransitionIn waits for the vehicle - so the log shows
+      another lua_State pointer for them; it is a thread of the same state. A cross-state value store was built,
+      shown unnecessary in game, and removed again.)
+    - Helicopter (runs 39-46): JWE3 offers it only from behind (VehicleUtils.CanSwitchCamera is false for helicopters),
+      and that chase camera writes the transform after the VR manager, so anchoring the rig on the seat changed
+      nothing on screen. The helicopter does have a driving seat camera, so the mod now asks the camera manager for
+      FirstPersonVehicle on it (public RequestMode through the world API): "asked for the first-person camera on vehicle
+      18366 (driving seat camera, try 1)", accepted at once. Mod on and mod off give the same framing
+      (run46_seat.png / run46_gameseat.png) - it is the game's own seat camera, low on the pad while landed. Whether
+      that seat reads well in flight is for the headset test.
+    - Also: while the game camera is still the park camera after entering a vehicle, the rig keeps the park kind
+      (no moment at the overview camera's height at 1:1).
+    - Not seen: driving or flying (no pad input remotely), the gun seat, guest view.
+
 2026-10-27  0.0.7  HUD texture made thread-safe; first-headset-test checklist (remote run 37, headset not worn)
     - The HUD texture, its two views and its size/format were plain globals rewritten on the render thread while
       game threads redirect into them (a torn read of a view could send UI draws to a wrong resource). Now each

@@ -201,6 +201,68 @@ local SameTransform = function(a, b)
            d(fa:GetX() - fb:GetX()) + d(fa:GetY() - fb:GetY()) + d(fa:GetZ() - fb:GetZ()) < 1e-3
 end
 
+-- JWE3VR.Gameplay requires this module, so it is required here only when first needed. (A lookup in
+-- package.loaded by its written name found nothing in game: the keys are stored differently.)
+local tGameplay = nil
+Camera.GetGameplay = function()
+    if not tGameplay then
+        local bOk, t = pcall(require, "JWE3VR.Gameplay")
+        if bOk and global.type(t) == "table" then tGameplay = t end
+    end
+    return tGameplay
+end
+
+-- The vehicle the camera follows: from the camera mode's init table, else from the active UI mode.
+local CameraVehicle = function(cmm, Gameplay)
+    if cmm and cmm.GetCurrentModeInit then
+        local bOk, tInit = pcall(cmm.GetCurrentModeInit, cmm)
+        if bOk and global.type(tInit) == "table" and tInit.nVehicle then return tInit.nVehicle end
+    end
+    return Gameplay and Gameplay.ActiveVehicle and Gameplay.ActiveVehicle() or nil
+end
+
+-- A first-person seat camera of the vehicle (driving, else riding - the cinematic camera rides any vehicle that
+-- way): its usage flag and a name, or nil. Cached per vehicle.
+Camera.tSeats = {}
+Camera.SeatCamera = function(vehicles, nVehicle)
+    local tSeat = Camera.tSeats[nVehicle]
+    if not tSeat then
+        tSeat = {}
+        for _, sUsage in global.ipairs({"Driving", "Riding"}) do
+            local nUsage = vehicles and vehicles["FirstPersonCameraUsage_" .. sUsage]
+            if nUsage and not tSeat.nUsage then
+                local bOk, n = pcall(vehicles.GetNumFirstPersonCameras, vehicles, nVehicle, nUsage)
+                if bOk and global.type(n) == "number" and n >= 1 then
+                    tSeat.nUsage, tSeat.sWhich = nUsage, global.string.lower(sUsage) .. " seat camera"
+                end
+            end
+        end
+        Camera.tSeats[nVehicle] = tSeat
+        Bridge.Text("vehicle " .. tostring(nVehicle) .. ": " .. (tSeat.sWhich or "no seat camera"))
+    end
+    return tSeat.nUsage, tSeat.sWhich
+end
+
+-- JWE3 shows helicopters only from behind (VehicleUtils.CanSwitchCamera), and that camera writes the transform
+-- after the VR manager, so the rig cannot move it. If the vehicle has a seat camera, ask the camera manager for
+-- the first-person mode on it - what the jeep gets from StartInFirstPerson. Retried a few times per vehicle.
+Camera.tSeatRequests = {}
+Camera.RequestSeatCamera = function(cmm, tWorld, Gameplay)
+    local nVehicle = CameraVehicle(cmm, Gameplay)
+    if not nVehicle or nVehicle == 0 or not cmm or not cmm.RequestMode then return nil end
+    local nUsage, sWhich = Camera.SeatCamera(tWorld and tWorld.vehicles, nVehicle)
+    if not nUsage then return nil end
+    local tReq = Camera.tSeatRequests[nVehicle] or {nTries = 0, nWait = 0}
+    Camera.tSeatRequests[nVehicle] = tReq
+    tReq.nWait = tReq.nWait - 1
+    if tReq.nTries >= 5 or tReq.nWait > 0 then return sWhich end
+    tReq.nTries, tReq.nWait = tReq.nTries + 1, 30 -- ticks between tries
+    local bOk, sErr = pcall(cmm.RequestMode, cmm, "FirstPersonVehicle", {nVehicle = nVehicle, nCameraIndex = 1, nUsageFlags = nUsage}, true)
+    Bridge.Text("asked for the first-person camera on vehicle " .. tostring(nVehicle) .. " (" .. sWhich .. ", try " ..
+                tostring(tReq.nTries) .. (bOk and ")" or ("): " .. tostring(sErr))))
+    return sWhich
+end
+
 Camera.ManagerTick = function(nDt)
     if not Bridge.IsLoaded() then return end
     local camID = api.camera.GetMainCameraID()
@@ -219,22 +281,29 @@ Camera.ManagerTick = function(nDt)
         Camera.bManagerPathLogged = true
         Bridge.Text("camera: driven from the VR manager (camera component not reachable)")
     end
-    -- Camera mode: the player-facing UI mode first (tracked in this Lua state), else what the camera manager
-    -- reports through the world API, else Standard.
-    local Gameplay = global.package and global.package.loaded and global.package.loaded["JWE3VR.Gameplay"]
+    -- Camera mode: the player-facing UI mode first, else what the camera manager reports through the world
+    -- API, else Standard.
+    local Gameplay = Camera.GetGameplay()
     local sTag = Gameplay and Gameplay.sUIMode
-    local sMode = sTag and Gameplay.tUIModeCamera[sTag] or nil
-    if not sMode then
-        sMode = "Standard"
-        local bOk, tWorld = pcall(api.world.GetWorldAPIs)
-        local cmm = bOk and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
-        if cmm and cmm.GetCurrentModeName then
-            local bOk2, s = pcall(cmm.GetCurrentModeName, cmm)
-            if bOk2 and global.type(s) == "string" and Camera.tModeKinds[s] then sMode = s end
-        end
+    local bOk, tWorld = pcall(api.world.GetWorldAPIs)
+    if not bOk or global.type(tWorld) ~= "table" then tWorld = nil end
+    local cmm = tWorld and tWorld.CameraModeManager
+    local sGameMode = nil
+    if cmm and cmm.GetCurrentModeName then
+        local bOk2, s = pcall(cmm.GetCurrentModeName, cmm)
+        if bOk2 and global.type(s) == "string" then sGameMode = s end
     end
+    local sMode = (sTag and Gameplay.tUIModeCamera[sTag]) or (sGameMode and Camera.tModeKinds[sGameMode] and sGameMode) or
+                  "Standard"
+    -- Entering a vehicle, the game camera follows the UI mode a few frames later: keep the park rig until it has
+    -- left the park camera (else the 1:1 seat rig sits at the overview camera for a moment).
+    if sTag and sGameMode and Camera.tModeKinds[sGameMode] == K.Overview then sMode = sGameMode end
     local nKind = Camera.KindFor(sMode)
     local vPos, vR, vU, vF = anchor:GetPos(), anchor:GetR(), anchor:GetU(), anchor:GetF()
+    local sSeat = nil
+    if sTag == "drive" and (sGameMode == "ThirdPersonVehicle" or sGameMode == "VehicleLockOn") then
+        sSeat = Camera.RequestSeatCamera(cmm, tWorld, Gameplay)
+    end
     if nKind == K.Gunner then
         -- Sit at the gun mount, oriented like the vehicle body (the turret must not swing the world).
         local nVehicle, nGunner = Gameplay and Gameplay.GunnerIDs()
@@ -247,11 +316,12 @@ Camera.ManagerTick = function(nDt)
             nKind = K.Seat -- no gun seat known: sit where the game camera is
         end
     end
-    if sMode ~= Camera.sMode or nKind ~= Camera.nKind then
+    if sMode ~= Camera.sMode or nKind ~= Camera.nKind or sSeat ~= Camera.sSeat or sGameMode ~= Camera.sGameMode then
         Bridge.Log(Bridge.M.CameraKind, nKind)
-        Bridge.Text("camera mode " .. sMode .. " (rig kind " .. tostring(nKind) .. ", ui mode " .. tostring(sTag) .. ")")
+        Bridge.Text("camera mode " .. sMode .. " (rig kind " .. tostring(nKind) .. ", ui mode " .. tostring(sTag) ..
+                    ", game camera " .. tostring(sGameMode) .. (sSeat and (", asking for its " .. sSeat) or "") .. ")")
     end
-    Camera.sMode, Camera.nKind = sMode, nKind
+    Camera.sMode, Camera.nKind, Camera.sSeat, Camera.sGameMode = sMode, nKind, sSeat, sGameMode
     local bOverride, px, py, pz, fx, fy, fz, ux, uy, uz, nFovY = Bridge.Tick(nKind, nDt or 0, vPos, vR, vU, vF)
     if Camera.nLoggedOverride ~= bOverride then
         Camera.nLoggedOverride = bOverride
