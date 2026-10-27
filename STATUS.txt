@@ -1,0 +1,32 @@
+JWE3 VR - status log (newest first)
+===================================
+
+2026-10-26  0.0.1  Phase 0 started: JWE2 VR ported, own Lua loader, RE tools generalised - built and unit-tested,
+                   JWE3 NOT installed, nothing run in the game or a headset
+    - Machine: JWE3 is not installed (Steam libraries on C: and E: have no Jurassic titles; D: is listed by Steam
+      but not mounted). JWE2 VR cloned from PlasteredCrab/jwe2-vr to E:\Modding\Jurassic Park Evolution 2 VR.
+    - ACSE question settled: ACSE for JWE3 is Nexus mod 2, v0.730, uploaded 2025-10-22 and never updated; the
+      OpenNaja GitHub has no JWE3 source; mod comments from Jun-Sep 2026 say the authors stopped JWE3 support, with
+      mixed reports on whether 0.730 still works after the Rebirth update; open bugs include startup crashes and the
+      keyboard/mouse options tab disappearing. Decision: no ACSE dependency.
+    - pack: new JWE3VR.Hooks (own require wrap + sweep of package.loaded + park-environment manager injection,
+      written fresh; ACSE is GPL-3 and was read only to learn the mechanism). database.jwe3vrluadatabase.lua now only
+      installs the hooks from AddContentToCall. The manager sweeps again at park start for modules loaded through a
+      require captured before ours. New pack GUID.
+      Risk to check first: if the park modules load before AddContentToCall runs and through captured requires, the
+      sweep at manager Init is the only catch; ACSE avoided this by hooking from Init.ovl.
+    - native: renamed JWE2VR -> JWE3VR (DLL, export jwe3vr_lua, ini/log names, OpenXR app/action-set names). Loader
+      and DLL accept JWE3*.exe (real name unverified). scan::kKnownBuild = 0 until a JWE3 build is surveyed.
+      Bridge layout self-check: the func slot must hold jwe3vr_lua as a light C function (tag 0x16) or the call
+      returns nothing (new bridge test covers it).
+    - re: tools take --exe / JWE3_EXE, find the code section and .pdata from the PE headers (no JWE2 addresses
+      left); new survey.py answers the binary Phase 0 questions in one run; dis.py renamed disasm.py (it shadowed
+      Python's dis module); luaapi.py flags VMJMP bindings; ghidra.ps1 runs headless import/dump with this machine's
+      Ghidra 12.0.3 + Corretto 21; JWE3PrepareImport drops any executable block >= 128 MB; targets.txt reset to
+      string anchors. Smoke-tested every tool on bg3.exe and the Ghidra launcher on our own version.dll.
+    - tests: build.ps1 OK with MSVC here; test.ps1 = math checks, bridge checks, and a new Lua 5.3 syntax check of
+      the pack (luac built from third_party\lua). All pass.
+    - Not done: cobra-tools setup (needs Python 3.11; only 3.10 here), any JWE3 RE, the design doc's runtime facts.
+    - Next, once JWE3 is installed: survey.py -> set kKnownBuild/exe name/proxy DLL; Lua extract + decompile
+      (re/lua/README.md) -> confirm AddContentToCall, EnvironmentPrototype.Managers, CameraModeManager, mode names;
+      Ghidra import -> decompile GetZoom/GetFOV/SetFOVY to confirm the bridge layout.

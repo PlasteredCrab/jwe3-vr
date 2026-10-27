@@ -1,0 +1,28 @@
+# Build outputs
+native/JWE3VR/build/
+dist/
+
+# Third-party code is fetched by third_party/fetch.ps1 (not committed)
+third_party/*
+!third_party/fetch.ps1
+
+# Frontier-derived material: never publish
+re/lua/*
+!re/lua/README.md
+re/decomp/
+re/ghidra/
+re/rtti_classes.txt
+re/work/
+strings.tsv
+leas.pkl
+funcs.pkl
+lua_api.tsv
+survey.md
+
+# Python caches
+__pycache__/
+
+# Runtime files
+*.log
+*.dmp
+JWE3VR.ini

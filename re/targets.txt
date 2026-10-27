@@ -1,0 +1,39 @@
+# Decompile targets for JWE3DumpTargets.java.
+# JWE3: no addresses yet. Only string anchors are listed, because they survive a new build.
+# After the binding map (re/tools/luaapi.py -> lua_api.tsv), add "fn <name> <address> [depth]"
+# lines for the bindings below. JWE2 VR used these (JWE2 build 1749823099 addresses are in the
+# jwe2-vr repo's re/targets.txt; they do NOT apply to JWE3).
+#
+# Camera API:   SetFOVY GetFOV GetMainCameraID SetMainCameraID SetViewport
+#               Set/GetDropCameraTransform SetDropCameraEnabled GetCameraShakeTransform
+# Gunner API:   GetCameraAttachTransform GetCameraAimDirection GetAimAngles GetZoom
+#               SwitchGunnerProjectile SetPlayerControlled SetPlayerControlledCameraTracking
+#               SetShootingPlayerControlled GetTargetAimPos
+# Vehicle API:  GetVehicleInputs SetVehicleInputs SetPlayerControlled
+#               GetFirstPersonCameraProperties GetHelicopterCurrentAirVelocity SetControllingVehicle
+# Mouse API:    CreatePlayerControlContext Get/SetMousePositionUV GetMouseRay
+# Lua core:     lua_setfield (the call after every binding name), luaL_traceback, panic handler
+# Bridge layout: decompile 3-4 simple getters (GetZoom, GetFOV, SetFOVY) to re-check the stack
+#               layout in native/JWE3VR/src/bridge.h before the first in-game run.
+
+# Lua
+str loadstring
+str _VERSION
+str unexpected symbol
+
+# Camera, view and render
+str Casino::LuaScript::API::Camera
+str CameraViewportUpdate
+str CameraPropertyUpdate
+str Camera/ApplyScreenAspectRatioChanges
+str Casino::SceneGraph::TAARenderFeature
+str c_viewProjection
+str g_cameraForward
+str SetProjectionMode
+str ProjectionMode_Perspective
+str Components.CinematicCamera
+
+# Vehicles and guns
+str GetFirstPersonCameraProperties:
+str PBU_PlayerDrivenVehicle
+str EndGunnerCamera
