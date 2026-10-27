@@ -1,6 +1,18 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.24  What only runs once the headset is worn; OpenXR errors rate-limited (run 100)
+    - Every run so far sat in OpenXR state 3 (headset not on the head). The copies into the headset's images (eyes,
+      flat screen, HUD panel, laser dot) run in that state too and have been seen working; only the layer list
+      handed to xrEndFrame depends on shouldRender, so the compositor has never received a layer from the mod in
+      JWE3. That code is JWE2 VR's, unchanged; read through, nothing wrong found (layer count within its array,
+      the HUD panel only with the eyes, rects and sizes from the swapchains).
+    - If xrEndFrame refused a layer it would fail every frame, and every OpenXR failure was logged: about 90 error
+      lines a second. Failures are now logged the first 5 times per call, then every 1000th with a count. README
+      troubleshooting has an entry for "the headset shows nothing although the log says state 5".
+    - Run 100: OpenXR starts as before (SteamVR/OpenXR 2.18.4, stage space, state 3, eye swapchains 1920x1080
+      format 24), no errors.
+
 2026-10-27  0.0.23  Review of this session's control changes: one fix (not testable without controllers)
     - Leaving the walking view by holding dominant B sends the game's pad B as a pulse of at least 0.25 s and
       3 ticks (0.0.17). The pulse only counted down while walking, and the game leaves the guest view on its

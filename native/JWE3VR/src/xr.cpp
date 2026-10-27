@@ -10,6 +10,8 @@
 #include <openxr/openxr_platform.h>
 
 #include <deque>
+#include <map>
+#include <mutex>
 
 namespace jvr::xr {
 
@@ -66,11 +68,22 @@ static XrPosef g_screenPose{{0, 0, 0, 1}, {0, 1.5f, -2.f}};
 static bool g_placeScreen = true;
 static float g_screenAspect = 16.f / 9.f;
 
+// Failures are logged the first 5 times per call site, then every 1000th with a count: a call that fails every
+// frame (xrEndFrame refusing a layer, say) must not write 90 lines a second.
 static bool Ok(XrResult r, const char* what) {
     if (XR_SUCCEEDED(r)) return true;
+    static std::mutex lock;
+    static std::map<const char*, unsigned> failures; // keyed by the call's name literal
+    unsigned n;
+    {
+        std::lock_guard<std::mutex> l(lock);
+        n = ++failures[what];
+    }
+    if (n > 5 && n % 1000 != 0) return false;
     char buf[XR_MAX_RESULT_STRING_SIZE] = "?";
     if (g_instance) xrResultToString(g_instance, r, buf);
-    LOGE("OpenXR %s failed: %s (%d)", what, buf, (int)r);
+    LOGE("OpenXR %s failed: %s (%d)%s", what, buf, (int)r, n == 5 ? "; further failures of this call logged every 1000th" : "");
+    if (n > 5) LOGE("OpenXR %s has failed %u times", what, n);
     return false;
 }
 

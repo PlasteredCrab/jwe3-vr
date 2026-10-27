@@ -262,6 +262,10 @@ The file is written with comments on first run. The ones you are most likely to 
 
 - **No VR at all:** check `JWE3VR.log`. "OpenXR init failed" = runtime not running. No log = the mod never loaded
   (with `-NoProxy` the game's Lua loads it at startup: look for "bridge: first call from Lua").
+- **Headset shows nothing from the game (the runtime's own void or loading screen) although the log says "OpenXR
+  state 5":** look for "OpenXR xrEndFrame failed" (logged the first 5 times, then every 1000th with a count). The
+  layers the mod hands the headset - eyes, flat screen, HUD panel, laser dot - are only sent once the headset is
+  worn (state 5), so they have never been sent in JWE3; the copies into them run, and were seen working, without it.
 - **3D looks wrong (inside-out, doubled, one eye a frame late):** set `AERPresentLag` to 0, 1 or 2, or flip `SwapEyes`.
 - **Camera does not follow the head:** the Lua side reports into `JWE3VR.log` (lines starting `lua:`). Expect
   "hooks installed", "VR manager Init (park loaded)", "gameplay init done", then "camera tick: mode Standard,
