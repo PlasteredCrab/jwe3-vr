@@ -62,7 +62,7 @@ ScreenWidth = 2.4
 ; floating panel instead of being painted onto both eyes. Needs the game to emit pass markers; the log
 ; says "in-world HUD active" when it works, otherwise the tablet is used.
 WorldHud = 1
-UIMarkers = Scaleform,UIRender,GUI,HUD
+UIMarkers = Gameface,Renoir,Scaleform,UIRender,HUD
 HudDistance = 1.4
 HudWidth = 1.6
 HudDropDeg = 12

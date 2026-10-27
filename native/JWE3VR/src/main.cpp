@@ -51,9 +51,8 @@ static DWORD WINAPI InitThread(void*) {
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     const wchar_t* name = wcsrchr(exe, L'\\');
-    // The JWE3 exe name is not verified yet (Phase 0); accept JWE3*.exe.
-    if (!name || _wcsnicmp(name + 1, L"JWE3", 4) != 0) {
-        LOGI("not running inside JWE3*.exe; hooks stay off (bridge only, for tests)");
+    if (!name || _wcsicmp(name + 1, L"JWE3.exe") != 0) {
+        LOGI("not running inside JWE3.exe; hooks stay off (bridge only, for tests)");
         return 0;
     }
     g_prevFilter = SetUnhandledExceptionFilter(CrashFilter);

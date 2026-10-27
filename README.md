@@ -7,17 +7,18 @@ Ported from [JWE2 VR](https://github.com/PlasteredCrab/jwe2-vr) (same studio, sa
 
 Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
-> **Status: Phase 0, game not installed yet.** The JWE2 VR code is ported, renamed and builds; the offline tests
-> pass. **Nothing has run in JWE3 or a headset.** Every game-side name (Lua modules, camera modes, APIs), the Lua
-> stack layout and the content-pack loading order are JWE2 facts still to be checked on JWE3; see
-> [Phase 0 checklist](#phase-0-checklist). Features below describe what the code does, not what has been seen
-> working.
+> **Status: Phase 0 done offline, not yet run in the game.** Checked against JWE3 build 1792088119 (Steam build
+> 25967550): the exe, the Lua stack layout, every Lua binding the mod calls and the decompiled game Lua it hooks.
+> The code was updated for what changed (see [Phase 0 checklist](#phase-0-checklist)). It builds, the offline
+> tests pass and the content pack packs into a JWE3 `Main.ovl`. **Nothing has run in JWE3 or a headset yet.**
+> Features below describe what the code does, not what has been seen working.
 
 ## Features
 
 **Seeing the park in VR**
 - Head tracking in every camera mode: your headset is the game camera (6DoF), with no pitch or roll forced on
-  you, snap or smooth turn, recentre, seated and standing play.
+  you, snap or smooth turn, recentre, seated and standing play. Covers JWE3's new modes too: the Freelook park
+  camera and the sandbox map generator as the park model, the nest-exit cinematic on the flat screen.
 - Stereo 3D by alternate-eye rendering (one eye per frame), plus an experimental mode that renders both eyes every
   frame by replaying the frame.
 - True world scale in metres: walking and vehicles are 1:1, the park overview is a 1:30 model you can grab,
@@ -40,8 +41,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Park overview: a laser picks and builds; a dot shows where it lands. Grab to move the park, two hands to scale
   and rotate it, the stick to glide.
 - Walking (the game's first-person view): you walk where you look, at your real height.
-- Ranger jeep and helicopter: you sit in the driver's seat; the controllers act as an Xbox pad, and gripping
-  with both hands turns them into a steering wheel.
+- Ranger jeep and helicopter: you sit in the driver's seat (the game's own first-person seat camera); the
+  controllers act as an Xbox pad, and gripping with both hands turns them into a steering wheel.
 - Gun seats (jeep and helicopter): the dart, medicine and camera guns follow your hand; the trigger fires; the
   game's own ammo switch keeps the HUD right.
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
@@ -54,7 +55,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
 **Install and safety**
 - No script extender needed: the mod's content pack installs its own module hooks (ACSE for JWE3 is
-  unmaintained). It still works alongside ACSE.
+  unmaintained), including a hook on the game's environment loader so the VR manager joins every park. It still
+  works alongside ACSE.
 - The Lua bridge checks the game's Lua stack layout on every call and does nothing if it doesn't match, so a game
   update turns VR off instead of crashing.
 - No game files are patched; the exe is never modified.
@@ -95,31 +97,31 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
 ## Phase 0 checklist
 
-Settled without the game (2026-10-26):
+All checked on 2026-10-26 against `JWE3.exe` build 1792088119 (Steam build 25967550) and its decompiled Lua.
+Nothing below has been confirmed at runtime.
 
-- **Script extender:** ACSE for JWE3 exists (Nexus mod 2, v0.730, uploaded 22 Oct 2025) but has not been updated
-  since, the OpenNaja GitHub has no JWE3 source, and the authors have stepped back from JWE3. Decision: the mod
-  carries its own loader (`pack/JWE3VR/Main/jwe3vr.hooks.lua`): the game calls the pack's
-  `Database.JWE3VRLuaDatabase.AddContentToCall`, which wraps `require`, patches already-loaded modules, and adds
-  the VR manager to the park environment, as ACSE did on JWE2.
-- **cobra-tools** supports JWE3 (`constants/Jurassic World Evolution 3`), maintained as of Oct 2026, needs Python 3.11.
-
-Needs the game installed (run `re/tools/survey.py` first; it answers the binary questions in one go):
-
-| Check | Tool | Notes |
+| Check | JWE3 result | What changed in the mod |
 | --- | --- | --- |
-| Exe name, PE build stamp | `survey.py` | Set `scan::kKnownBuild`; the loader accepts `JWE3*.exe` until then |
-| Does the exe import `version.dll`? | `survey.py` imports | If not, switch the proxy to another imported DLL |
-| D3D12 only, Streamline present | `survey.py` | |
-| Denuvo layout (VM blob, code section name) | `survey.py` sections | `JWE3PrepareImport.java` drops any executable block of 128 MB or more |
-| Lua 5.3, `loadlib` present | `survey.py` strings | |
-| Lua stack-op counter: one dominant target | `survey.py` | JWE2: one target, 66 uses |
-| Lua stack layout (24-byte values, tags, `L+0x10` top, `L+0x20` CallInfo) | Ghidra: decompile `GetZoom`, `GetFOV`, `SetFOVY` | The bridge refuses to run if its own slot doesn't match |
-| Lua bindings that jump into the VM | `luaapi.py` (`VMJMP` flag) | Call, never hook |
-| `AddContentToCall`, `EnvironmentPrototype.Managers`, load order | Lua decompile (`re/lua/README.md`) | The loader depends on these |
-| Camera choke point, mode names, shake switch, eye height | Lua decompile | `CameraModeManager.Advance` on JWE2 |
-| Vehicle entry, gunner aim/ammo, staff orders, cursor ray | Lua decompile | |
-| New JWE3 gameplay worth VR support | Lua module list | |
+| Script extender | ACSE for JWE3 is v0.730 (Oct 2025), unmaintained | Own loader, `jwe3vr.hooks.lua`; ACSE not needed |
+| Exe and build | `JWE3.exe`, PE stamp 1792088119 | `scan::kKnownBuild` set; loader and DLL require `JWE3.exe` |
+| Proxy DLL | The exe imports `VERSION.dll` (3 functions) | None: the `version.dll` proxy works as on JWE2 |
+| Graphics | D3D12 + DXGI, NVIDIA Streamline (`sl.*.dll`), DLSS and FSR3 frame generation | None |
+| Denuvo layout | Code in `.code` (38.7 MB); VM blob in executable `.shared` (252 MB) | Scanners and the Ghidra pre-script find both by flags and size |
+| Lua | 5.3 with `loadlib`, `loadstring`, `tryrequire` | None |
+| Lua stack layout | Same as JWE2: `L+0x10` top, `L+0x20` CallInfo, 24-byte slots, tag at +0x10, float32 tag 3, int tag 0x13 (64-bit), counter stored at `L-0x10` (checked in the `GetFOV` and `GetZoom` code) | None; the bridge's layout self-check stays |
+| Stack-op counter | One dominant target, 175 uses | None |
+| Lua bindings | 5,422 found; 90 (1.7%) jump into the VM. JWE3 adds a second registration pattern (function in `r8`, name in `rdx`) | `luaapi.py` reads both patterns |
+| Content-pack Lua loading | `Database.Main` calls `AddContentToCall` on `Database.<Pack>LuaDatabase` for every loaded pack, at startup | None |
+| Park manager injection | `EnvironmentPrototype.Managers` as on JWE2, but `Environment.Environment` loads prototypes through a `require` saved at game start, past our wrap | Hooks wrap `Environment._MergePrototype` to load the prototype through our `require` first |
+| Camera choke point | `CameraModeManager.Advance` -> `SetTransform(main camera, tFinal.transformQ)`, `SetFOVY(nCameraFOV / nMagnify)`; `GetConfig().bCameraShake`; walking eye height 1.67 m (metres) | New modes mapped: Freelook and MapGenerator (overview), NestExit (flat screen) |
+| Vehicle entry | Same `RequestChangeUI` / `DriveVehicle` call; JWE2's `_SetCameraMode` is gone; `StartInFirstPerson` init flag is new | Drive-mode patch sets `StartInFirstPerson` |
+| Gunner aim and ammo | `GetCameraAimDirection`, `GetCameraAttachTransform`, `tModeData.gunnerID`, `VehicleGunnerUIMode:_SwitchAmmo` unchanged | None |
+| Staff orders | `SelectVehicleDestination` with `{Vehicle, OrderPriority}` unchanged; `FindAvailableRangerCar` / `FindAvailableACUHelicopter` removed | New `jwe3vr.vehicles.lua` finds the nearest ranger car / ACU helicopter from the AI director's own tables |
+| On-foot tools | `Tranquillise`, `IsDiseased`, `RemoveDisease`, `GetApproxNumDartsToCure` / `ToTreat` present; no `...ToTranquillise` | None (falls back to 3 darts) |
+| Cursor ray | `Helpers.RaycastUtils` still calls `api.input.GetMouseRay` | None |
+| UI renderer | Coherent Gameface (`cohtml`, Renoir) alongside Scaleform strings; a `WorldGUIPass` exists | `UIMarkers` default now `Gameface,Renoir,Scaleform,UIRender,HUD` (unverified until a `MarkerDump` run) |
+| Render passes | 60 named nodes; TAA, shadow, environment capture, skinning and height-variance passes match the marker defaults | None |
+| New JWE3 gameplay | Player-controllable aviary drones (with drone gun cameras), drone tranquillise tasks, monorail, underwater lagoon placement | Not covered yet (Phases 5 and 7) |
 
 ## Build
 
@@ -143,8 +145,8 @@ self-check), and a Lua 5.3 syntax check of the content pack.
 
 ## Install
 
-Not yet: the pack's `Main.ovl` is built with cobra-tools (`deploy.ps1`), and nothing has been tried in JWE3.
-When Phase 0 is done, close the game, then:
+Untested in the game so far. The pack's `Main.ovl` is built with cobra-tools (`E:\Modding\tools\cobra-tools`, a
+Python 3.11 venv; see `re/lua/README.md`). Close the game, then:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File deploy.ps1 -Build
@@ -181,8 +183,7 @@ The file is written with comments on first run. The ones you are most likely to 
 
 ## Troubleshooting
 
-- **No VR at all:** check `JWE3VR.log`. "OpenXR init failed" = runtime not running. No log = `version.dll` not loaded
-  (or the exe doesn't import it; see the Phase 0 checklist).
+- **No VR at all:** check `JWE3VR.log`. "OpenXR init failed" = runtime not running. No log = `version.dll` not loaded.
 - **3D looks wrong (inside-out, doubled, one eye a frame late):** set `AERPresentLag` to 0, 1 or 2, or flip `SwapEyes`.
 - **Camera does not follow the head:** the Lua side isn't running. Look in the game's Lua trace for
   "JWE3VR: hooks installed", "JWE3VR: manager added to the park environment" and "JWE3VR: bridge loaded", and in
@@ -214,7 +215,7 @@ The file is written with comments on first run. The ones you are most likely to 
 | `native/loader` | `version.dll` proxy that loads the mod at game start |
 | `native/JWE3VR/test` | Offline checks (rig math; the bridge against a fake `lua_State`) |
 | `pack/JWE3VR` | Content pack: own module hooks, camera wrap, gameplay, on-foot ranger, staff wand |
-| `re/tools` | `survey.py` (Phase 0 binary survey), strings / LEA scan / Lua binding map / refs / disassembly, Lua decompile |
+| `re/tools` | `survey.py` (Phase 0 binary survey), strings / LEA scan / Lua binding map / refs / disassembly, Lua decompile, `luagrep.py` (search extracted Lua) |
 | `re/ghidra.ps1`, `re/ghidra_scripts` | Headless Ghidra: import with the Denuvo blob removed, decompile `re/targets.txt` |
 | `third_party/fetch.ps1` | Fetches MinHook, the OpenXR loader SDK and the Lua 5.3 source |
 

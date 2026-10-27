@@ -1,6 +1,8 @@
-# Step 3: the Lua binding map. Bindings are registered as
-#   lea <reg>,[C function] ... lea r8,["Name"] ... call lua_setfield(L, -2, "Name")
-# so for every LEA of a string into r8, the nearest earlier LEA of a code address is the binding.
+# Step 3: the Lua binding map. Bindings are registered in two ways:
+#   A (JWE2 and JWE3): lea <reg>,[C function] ... lea r8,["Name"] ... call lua_setfield(L, -2, "Name")
+#      -> for every LEA of a string into r8, the nearest earlier LEA of a code address is the binding;
+#   B (JWE3): lea r8,[C function]; lea rdx,["Name"]; lea rcx,[table]; call <register helper>
+#      -> a string LEA into rdx right after a code LEA into r8.
 # Output lua_api.tsv: name, function VA, registration site VA, first-byte flag. "VMJMP" marks a
 # binding whose first instruction jumps out of the game code (into the Denuvo VM): call those
 # from Lua, never hook them.
@@ -28,6 +30,11 @@ def flag(fva):
 
 out = []
 for i, (a, t, r) in enumerate(leas):
+    if r == 2 and t in strs and i > 0:
+        a2, t2, r2 = leas[i - 1]
+        if r2 == 8 and a - a2 <= 0x10 and LO <= t2 < HI:
+            out.append((strs[t], hex(t2), hex(a), flag(t2)))
+        continue
     if r == 8 and t in strs:
         j = i - 1
         while j >= 0 and a - leas[j][0] < 0x140:

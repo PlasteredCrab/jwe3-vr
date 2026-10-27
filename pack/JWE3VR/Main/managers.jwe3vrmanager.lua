@@ -22,6 +22,8 @@ JWE3VRManager.Init = function(self, _tProperties, _tEnvironment)
     api.debug.Trace("JWE3VRManager:Init()")
     -- Catch hooked modules that were loaded through a require captured before ours was installed.
     require("JWE3VR.Hooks").Sweep()
+    self.nPendingTimer = 0
+    self.bHooksDone = false
     self.bReady = Bridge.Load()
     if not self.bReady then return end
     local bOk, sErr = pcall(Gameplay.Init, _tEnvironment)
@@ -38,6 +40,14 @@ end
 
 JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
     if not self.bReady then return end
+    -- Hooked modules loaded after park start (UI modes on first use) through a captured require.
+    if not self.bHooksDone then
+        self.nPendingTimer = self.nPendingTimer - (_nUnscaledDeltaTime or 0)
+        if self.nPendingTimer <= 0 then
+            self.nPendingTimer = 1
+            self.bHooksDone = require("JWE3VR.Hooks").SweepPending()
+        end
+    end
     local bOk, sErr = pcall(Gameplay.Advance, _nUnscaledDeltaTime)
     if not bOk and not self.bErrorLogged then
         self.bErrorLogged = true

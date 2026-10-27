@@ -1,39 +1,51 @@
-# Decompile targets for JWE3DumpTargets.java.
-# JWE3: no addresses yet. Only string anchors are listed, because they survive a new build.
-# After the binding map (re/tools/luaapi.py -> lua_api.tsv), add "fn <name> <address> [depth]"
-# lines for the bindings below. JWE2 VR used these (JWE2 build 1749823099 addresses are in the
-# jwe2-vr repo's re/targets.txt; they do NOT apply to JWE3).
-#
-# Camera API:   SetFOVY GetFOV GetMainCameraID SetMainCameraID SetViewport
-#               Set/GetDropCameraTransform SetDropCameraEnabled GetCameraShakeTransform
-# Gunner API:   GetCameraAttachTransform GetCameraAimDirection GetAimAngles GetZoom
-#               SwitchGunnerProjectile SetPlayerControlled SetPlayerControlledCameraTracking
-#               SetShootingPlayerControlled GetTargetAimPos
-# Vehicle API:  GetVehicleInputs SetVehicleInputs SetPlayerControlled
-#               GetFirstPersonCameraProperties GetHelicopterCurrentAirVelocity SetControllingVehicle
-# Mouse API:    CreatePlayerControlContext Get/SetMousePositionUV GetMouseRay
-# Lua core:     lua_setfield (the call after every binding name), luaL_traceback, panic handler
-# Bridge layout: decompile 3-4 simple getters (GetZoom, GetFOV, SetFOVY) to re-check the stack
-#               layout in native/JWE3VR/src/bridge.h before the first in-game run.
+# Decompile targets for JWE3DumpTargets.java (JWE3.exe, PE timestamp 1792088119, Steam build 25967550).
+# Addresses from re/tools/luaapi.py (lua_api.tsv, kept local). Bindings are registered either as
+#   A: lea <reg>,fn ... lea r8,"Name" ... call lua_setfield
+#   B: lea r8,fn; lea rdx,"Name"; lea rcx,[table]; call 0x14182ad20
+# The Lua stack layout was confirmed from the GetFOV and GetZoom code (capstone); the decompiles are for
+# reading, not needed to run the bridge.
 
-# Lua
+# Camera Lua API
+fn Lua_SetFOVY 0x1404bfc60 1
+fn Lua_GetFOV 0x1404c0f40 1
+fn Lua_GetMainCameraID 0x1404c14b0 1
+fn Lua_GetMouseRay 0x1404ea690 1
+fn Lua_GetMouseRayUnclamped 0x1404ea8c0 1
+fn Lua_Transform_SetTransform 0x14056be20 1
+fn Lua_Transform_GetTransform 0x14056c710 1
+
+# Gunner (jeep / helicopter guns)
+fn Lua_GetZoom 0x1408355d0 1
+fn Lua_GetCameraAttachTransform 0x140834e60 1
+fn Lua_GetCameraAimDirection 0x140835140 1
+fn Lua_GetAimAngles 0x1408353b0 1
+fn Lua_SwitchGunnerProjectile 0x140839fc0 1
+fn Lua_Gunner_SetPlayerControlled 0x14083b6b0 1
+
+# Vehicles
+fn Lua_GetVehicleInputs 0x140815430 1
+fn Lua_SetVehicleInputs 0x140815a00 1
+fn Lua_Vehicle_SetPlayerControlled 0x14081c6a0 1
+
+# Dinosaurs (on-foot ranger tools)
+fn Lua_Tranquillise 0x1406334e0 1
+fn Lua_IsDiseased 0x1406379d0 1
+fn Lua_RemoveDisease 0x140638720 1
+fn Lua_GetApproxNumDartsToCure 0x1406625d0 1
+
+# Engine
+fn Lua_RegisterBindingHelper 0x14182ad20 1
+fn Lua_GetWorldAPIs 0x1405961d0 1
+
+# Strings
 str loadstring
 str _VERSION
 str unexpected symbol
-
-# Camera, view and render
 str Casino::LuaScript::API::Camera
 str CameraViewportUpdate
-str CameraPropertyUpdate
-str Camera/ApplyScreenAspectRatioChanges
 str Casino::SceneGraph::TAARenderFeature
 str c_viewProjection
 str g_cameraForward
-str SetProjectionMode
-str ProjectionMode_Perspective
-str Components.CinematicCamera
-
-# Vehicles and guns
+str WorldGUIPass
 str GetFirstPersonCameraProperties:
-str PBU_PlayerDrivenVehicle
 str EndGunnerCamera

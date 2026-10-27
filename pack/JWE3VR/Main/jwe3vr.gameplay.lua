@@ -18,6 +18,7 @@ local Vector3 = require("Vector3")
 local Bridge = require("JWE3VR.Bridge")
 local Camera = require("JWE3VR.Camera")
 local Ranger = require("JWE3VR.Ranger")
+local Vehicles = require("JWE3VR.Vehicles")
 
 local Gameplay = module(...)
 
@@ -98,19 +99,17 @@ end
 ------------------------------------------------------------------------
 -- Driving: always sit in the driver's seat when a vehicle is entered.
 ------------------------------------------------------------------------
+-- JWE3's DriveVehicleUIMode.TransitionIn(self, _tInitData) switches to the first-person camera itself
+-- when _tInitData.StartInFirstPerson is set and the vehicle can switch camera; ask for that in VR.
 Gameplay.PatchDriveMode = function(tModule)
     if tModule.__JWE3VRPatched then return end
     tModule.__JWE3VRPatched = true
     local fnIn = tModule.TransitionIn
-    tModule.TransitionIn = function(self, ...)
-        local r = {fnIn(self, ...)}
-        pcall(function()
-            if not Bridge.IsLoaded() or not self.vehicle or not self._SetCameraMode then return end
-            local VehiclesAPI = api.world.GetWorldAPIs().vehicles
-            local n = VehiclesAPI:GetNumFirstPersonCameras(self.vehicle, VehiclesAPI.FirstPersonCameraUsage_Driving)
-            if n and n > 0 then self:_SetCameraMode(true) end
-        end)
-        return global.table.unpack(r)
+    tModule.TransitionIn = function(self, _tInitData, ...)
+        if Bridge.IsLoaded() and global.type(_tInitData) == "table" and _tInitData.StartInFirstPerson == nil then
+            _tInitData.StartInFirstPerson = true
+        end
+        return fnIn(self, _tInitData, ...)
     end
 end
 
@@ -215,10 +214,7 @@ end
 Gameplay.SendTeam = function(bHelicopter)
     local entity, vPos = Gameplay.EntityUnderLaser()
     if not vPos or not Gameplay.iUIMode then return false end
-    local tWorldAPIs = api.world.GetWorldAPIs()
-    local director = tWorldAPIs.VehicleAIDirector
-    if not director then return false end
-    local vehicle = bHelicopter and director:FindAvailableACUHelicopter(vPos) or director:FindAvailableRangerCar(vPos)
+    local vehicle = Vehicles.FindNearestTeam(vPos, bHelicopter)
     if not vehicle then
         Bridge.Haptic(Gameplay.nDominant, 0.2, 0.3, 0) -- long weak buzz: nobody free
         return false

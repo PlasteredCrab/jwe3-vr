@@ -121,7 +121,7 @@ Ranger.CallJeep = function(nHand)
     local camT = api.transform.GetTransform(api.camera.GetMainCameraID())
     if not camT or not tWorld.VehicleAIDirector or not tWorld.VehicleTaskQueue then return false end
     local vHere = camT:GetPos()
-    local vehicle = tWorld.VehicleAIDirector:FindAvailableRangerCar(vHere)
+    local vehicle = require("JWE3VR.Vehicles").FindNearestTeam(vHere, false)
     if not vehicle then
         Bridge.Haptic(nHand, 0.2, 0.3, 0)
         return false

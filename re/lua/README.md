@@ -3,17 +3,32 @@
 Do not redistribute: these are Frontier's game scripts, kept here for reference only. Everything in
 this folder except this README is ignored by git.
 
-**Status: not extracted yet.** JWE3 was not installed on the dev machine on 2026-10-26.
+**Status (2026-10-26, JWE3.exe build 1792088119):** extracted `Content0` (14,595 modules), `Content0_Init` (209),
+`GameMain` (236); 70 modules decompiled into `decompiled/`. Findings are in the main README's Phase 0 checklist.
 
 ## Setup (once)
 
-cobra-tools pins Python 3.11 (`requires-python = "==3.11.*"` in its pyproject):
+cobra-tools pins Python 3.11 (`requires-python = "==3.11.*"`; it imports `typing.LiteralString`). The dev
+machine has only 3.10 installed, so a portable 3.11 from the official NuGet package lives in
+`E:\Modding\tools\python311`:
 
 ```bash
-git clone https://github.com/OpenNaja/cobra-tools /e/Modding/tools/cobra-tools
+cd /e/Modding/tools && curl -sSL -o py311.zip https://www.nuget.org/api/v2/package/python/3.11.9
+```
+
+Unzip its `tools/` folder to `E:\Modding\tools\python311`, then:
+
+```bash
+git clone --depth 1 https://github.com/OpenNaja/cobra-tools /e/Modding/tools/cobra-tools
 cd /e/Modding/tools/cobra-tools
-py -3.11 -m venv .venv
+../python311/python.exe -m venv .venv
 .venv/Scripts/python -m pip install imageio "numpy<2" pillow "bitarray~=2.9.2"
+```
+
+Find which modules mention a name (constants, fields, function names), about 12 s over everything:
+
+```bash
+python -E re/tools/luagrep.py re/lua/Content0 re/lua/GameMain -- FireFlare TranquilliseDinosaur
 ```
 
 ## Extract and decompile
@@ -28,13 +43,18 @@ cd /e/Modding/tools/cobra-tools
 JWE3 may split game Lua across more packs than JWE2's `Content0`; `re/tools/survey.py` lists the
 content packs. Search every `Main.ovl` if a module is missing.
 
-## What to confirm (Phase 0)
+## What was confirmed (Phase 0)
+
+The JWE2 answers below were all re-checked on JWE3; see the main README for the JWE3 results. The one that
+differs in an important way: `environment.environment` saves `global.require` when the game starts and loads
+`Environments.ParkEnvironment` through it, after content-pack databases have run (GameDatabase init is at
+startup, park worlds come later). `jwe3vr.hooks.lua` therefore wraps `Environment._MergePrototype`.
 
 | Question | Where | JWE2 answer |
 | --- | --- | --- |
 | Does the game call `AddContentToCall` on each pack's `Database.*LuaDatabase`? | `database.main`, `database.gamedatabase` | yes |
 | Is `Environments.ParkEnvironment.EnvironmentPrototype.Managers` the manager list? | `environments.parkenvironment` | yes (ACSE relies on it) |
-| Are the park modules loaded after content-pack databases run? | `database.main` load order | unknown; ACSE hooked earlier, from `Init.ovl` |
+| Are the park modules loaded after content-pack databases run? | `game.basegame`, `environment.environment` | JWE3: yes, but through a `require` saved before ours |
 | Camera choke point | `components.cameras.cameramodemanager` `Advance` | `SetTransform(mainCam, tFinal.transformQ)` + `SetFOVY` |
 | Mode names | `CameraModeManager.tModeAPIs` | Debug, Focus, Orbit, Standard, FirstPersonVehicle, ThirdPersonVehicle, Gunner, MatchTarget, Animated, Map, Photo, Fixed, FirstPerson, Capture, VehicleLockOn, HatcheryExit, Guest, Panoramic, Dolly, Path |
 | Shake switch | `components.cameras.cameralogic` | config `bCameraShake` |

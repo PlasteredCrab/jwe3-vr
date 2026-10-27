@@ -19,9 +19,12 @@ local Camera = module(...)
 
 local K = Bridge.Kind
 
--- Game camera mode -> how the VR rig treats it. Cinematic and scripted cameras go to the flat screen.
+-- Game camera mode -> how the VR rig treats it (JWE3 CameraModeManager tModeAPIs, build 1792088119).
+-- Cinematic and scripted cameras go to the flat screen. "SceneryPlacement" is requested as Standard.
 Camera.tModeKinds = {
     Standard = K.Overview,
+    Freelook = K.Overview, -- JWE3: the second default park camera (toggled with GameCamera_FreelookMode)
+    MapGenerator = K.Overview, -- JWE3: sandbox island generator
     Focus = K.Overview,
     Orbit = K.Overview,
     Guest = K.Ground,
@@ -38,6 +41,7 @@ Camera.tModeKinds = {
     Dolly = K.Screen,
     Fixed = K.Screen,
     HatcheryExit = K.Screen,
+    NestExit = K.Screen, -- JWE3: hatchling nest exit cinematic
     Panoramic = K.Screen,
     MatchTarget = K.Screen,
     Debug = K.Off,

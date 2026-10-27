@@ -1,7 +1,7 @@
-// version.dll proxy for the JWE3 exe. JWE2.exe imported three functions from version.dll (whether
-// JWE3 does is a Phase 0 check); this proxy forwards all 17 exports to the real System32 copy and
-// loads JWE3VR.dll from the content pack folder (Win64\ovldata\JWE3VR\JWE3VR.dll). Only inside
-// JWE3*.exe: the crash reporter in the same folder gets a plain forwarder.
+// version.dll proxy for JWE3.exe. The game imports three functions from version.dll; this proxy
+// forwards all 17 exports to the real System32 copy and loads JWE3VR.dll from the content pack
+// folder (Win64\ovldata\JWE3VR\JWE3VR.dll). Only inside JWE3.exe: crash_reporter.exe in the same
+// folder gets a plain forwarder.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -55,7 +55,7 @@ static void LoadMod() {
     wchar_t exe[MAX_PATH];
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     const wchar_t* name = wcsrchr(exe, L'\\');
-    if (!name || _wcsnicmp(name + 1, L"JWE3", 4) != 0) return; // JWE3*.exe (name unverified)
+    if (!name || _wcsicmp(name + 1, L"JWE3.exe") != 0) return;
     wchar_t* slash = wcsrchr(exe, L'\\');
     *slash = 0;
     wchar_t dll[MAX_PATH];

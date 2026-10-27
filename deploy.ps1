@@ -18,7 +18,7 @@ $here = $PSScriptRoot
 $packDir = Join-Path $GameDir 'Win64\ovldata\JWE3VR'
 $proxy = Join-Path $GameDir 'version.dll'
 
-if (Get-Process -Name 'JWE3*' -ErrorAction SilentlyContinue) { throw 'Jurassic World Evolution 3 is running; close it first.' }
+if (Get-Process -Name 'JWE3' -ErrorAction SilentlyContinue) { throw 'Jurassic World Evolution 3 is running; close it first.' }
 
 if ($Uninstall) {
     if (Test-Path $proxy) { Remove-Item $proxy; Write-Host "removed $proxy" }
@@ -73,7 +73,7 @@ if ($Package) {
     return
 }
 
-if (-not (Get-ChildItem $GameDir -Filter 'JWE3*.exe' -ErrorAction SilentlyContinue)) { throw "no JWE3*.exe in $GameDir (use -GameDir)" }
+if (-not (Test-Path (Join-Path $GameDir 'JWE3.exe'))) { throw "JWE3.exe not found in $GameDir (use -GameDir)" }
 New-Item -ItemType Directory -Force $packDir | Out-Null
 Copy-Item (Join-Path $dist '*') $packDir -Force
 Copy-Item (Join-Path $bin 'version.dll') $proxy -Force

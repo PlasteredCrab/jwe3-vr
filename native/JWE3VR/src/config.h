@@ -44,7 +44,9 @@ struct Settings {
     float screenWidth = 2.4f;
 
     bool worldHud = true;         // draw the game's UI into its own texture and show it as a panel in the world
-    std::string uiMarkers = "Scaleform,UIRender,GUI,HUD";
+    // JWE3 draws its UI with Coherent Gameface ("UI (Gameface)", Renoir). "GUI" is left out: it would
+    // also match WorldGUIPass (in-world icons). Unverified until a MarkerDump run.
+    std::string uiMarkers = "Gameface,Renoir,Scaleform,UIRender,HUD";
     float hudDistance = 1.4f;     // in-world HUD panel distance (m)
     float hudWidth = 1.6f;
     float hudDropDeg = 12.0f;     // panel sits this far below eye level

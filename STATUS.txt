@@ -1,6 +1,39 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-26  0.0.2  Phase 0 done offline against JWE3.exe build 1792088119 - built, unit-tested, packs into a JWE3
+                   Main.ovl; NOT run in the game or a headset
+    - Install: E:\SteamLibrary\steamapps\common\Jurassic World Evolution 3, Steam build 25967550, JWE3.exe.
+    - survey.py: imports VERSION.dll (proxy OK), D3D12 + DXGI, Streamline, DLSS/FSR3 FG; code in .code (38.7 MB),
+      Denuvo VM in executable .shared (252 MB); Lua 5.3 + loadlib; stack-op counter 0x1435198b4, 175 uses.
+    - Lua stack layout verified in the GetFOV / GetZoom code: identical to JWE2 (top L+0x10, CallInfo L+0x20, 24-byte
+      slots, tag +0x10, float tag 3, int tag 0x13 as 64-bit, counter at L-0x10).
+    - luaapi.py: JWE3 also registers bindings as lea r8,fn / lea rdx,"Name" / call helper 0x14182ad20; both patterns
+      now read: 5,422 bindings, 90 (1.7%) jump into the VM. Every binding the mod calls exists.
+    - cobra-tools at E:\Modding\tools\cobra-tools on a portable Python 3.11.9 (E:\Modding\tools\python311, from the
+      official NuGet package; it needs typing.LiteralString). Lua extracted locally: Content0 14,595 modules,
+      Content0 Init 209, GameMain 236; 70 decompiled. New re/tools/luagrep.py searches all modules in ~12 s.
+    - Loader verified: Database.Main calls AddContentToCall on Database.<Pack>LuaDatabase for every loaded pack during
+      GameDatabase init at startup; EnvironmentPrototype.Managers as on JWE2. Found the load-order problem the design
+      doc flagged: Environment.Environment captured global.require at game start and loads Environments.ParkEnvironment
+      through it, so our require wrap never saw it. Fix: hook Environment._MergePrototype (called through the module
+      table) to load the prototype through our require first; _ExpandPrototypeModuleNames runs on every merge, so the
+      added manager resolves. Manager also re-checks unpatched hooks by name once a second (SweepPending).
+    - Camera: choke point unchanged (CameraModeManager.Advance; FOV now nCameraFOV / nMagnify). New modes Freelook and
+      MapGenerator -> overview, NestExit -> flat screen. Eye height 1.67 m: units are metres.
+    - Vehicles: DriveVehicleUIMode lost _SetCameraMode; the patch now sets the game's StartInFirstPerson init flag.
+      VehicleAIDirector lost FindAvailableRangerCar / FindAvailableACUHelicopter; new jwe3vr.vehicles.lua picks the
+      nearest ranger car (subtype 10) or ACU helicopter (subtype 0) that CanVehicleBeIssuedTasks.
+    - UI is Coherent Gameface (cohtml / Renoir); UIMarkers default now Gameface,Renoir,Scaleform,UIRender,HUD ("GUI"
+      dropped: it would match WorldGUIPass). Unverified until a MarkerDump run.
+    - New JWE3 gameplay not covered yet: player-controlled aviary drones (drone gun cameras), drone tranquillise tasks,
+      monorail, underwater lagoon placement.
+    - deploy.ps1 -Package builds dist\JWE3VR.zip; the packed Main.ovl extracts back to all 8 modules as JWE3.
+    - Ghidra import of JWE3.exe started (re/ghidra, local only) for later decompiles; re/targets.txt has JWE3 addresses.
+    - First in-game test, in order: (1) JWE3VR.log "game present queue", "OpenXR session created"; (2) the game's Lua
+      trace "JWE3VR: hooks installed" at startup, "manager added to the park environment" and "bridge loaded" on park
+      load; (3) camera follows the head; (4) MarkerDump = 1 for a minute to confirm UIMarkers / TAAMarkers.
+
 2026-10-26  0.0.1  Phase 0 started: JWE2 VR ported, own Lua loader, RE tools generalised - built and unit-tested,
                    JWE3 NOT installed, nothing run in the game or a headset
     - Machine: JWE3 is not installed (Steam libraries on C: and E: have no Jurassic titles; D: is listed by Steam

@@ -1,5 +1,5 @@
-// Code scanning in the game exe. Only real code sections are scanned (in the JWE2 Denuvo build the
-// code was the executable section misnamed ".bss"); a VM blob over 128 MB is skipped by size.
+// Code scanning in JWE3.exe. Only real code sections are scanned (JWE3: ".code", 38.7 MB); the
+// Denuvo VM blob (JWE3: executable ".shared", 252 MB) is skipped by size.
 #pragma once
 
 #include <cstdint>
@@ -7,9 +7,8 @@
 
 namespace jvr::scan {
 
-// PE timestamp of the JWE3 exe the RE notes were made on. 0 until Phase 0 has run on a JWE3 install
-// (JWE2 VR's was 1749823099); the log then always says "not the build the mod was made on".
-constexpr uint32_t kKnownBuild = 0;
+// PE timestamp of the JWE3.exe the RE notes were made on (Steam build 25967550, 2026-10-15).
+constexpr uint32_t kKnownBuild = 1792088119;
 uint32_t GameBuild();
 
 // Pattern like "8B 0D ?? ?? ?? ?? FF C1". Calls fn for every match in executable sections < 128 MB.
