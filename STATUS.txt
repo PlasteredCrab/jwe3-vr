@@ -1,6 +1,14 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.10  Alternate-eye pairing checked in game (remote run 57, headset not worn)
+    - New debug aid JWE3VR_aer.req: the next 8 presented frames are saved as JWE3VR_aer<n>_eye<e>.bmp with the eye and
+      rig tick each is paired with. Run with IPDScale = 20 (eyes ~38 m apart at the 1:30 park scale) in the park:
+      consecutive ticks 89..96, eyes 1,0,1,0,..., no repeat or drop. Every frame labelled eye 0 is shifted 13 px right
+      of the eye 1 frames (phase correlation; the facility sits ~40 px further right) - the left eye's view, so the
+      defaults (AERPresentLag 1, SwapEyes 0) pair each image with its own eye. Not checkable this way: a lag off by
+      two frames (same eye) - that needs a moving camera.
+
 2026-10-27  0.0.9  The rig really drives the frame; the virtual pad reaches JWE3; gun seat (runs 47-56, headset not worn)
     - Correction to 0.0.4-0.0.8: the rig's camera transform never reached the rendered frame, only its FOV. The game's
       camera manager rewrites the main camera every frame after the VR manager, and re-sends the FOV only when its own

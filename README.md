@@ -247,6 +247,8 @@ The file is written with comments on first run. The ones you are most likely to 
   (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
   target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).
   `JWE3VR_cbscan.req` searches the game's large read-write memory for the camera position (constant-buffer hunting).
+  `JWE3VR_aer.req` saves the next 8 frames as `JWE3VR_aer<n>_eye<e>.bmp` with the eye each is shown to (with a large
+  `IPDScale` the eyes' frames differ visibly: a frame for the left eye shows the scene shifted right).
 - **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
   panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`
   to see which render target holds the UI; until then the tablet shows the HUD.

@@ -563,6 +563,27 @@ static void OnPresent(IDXGISwapChain* sc) {
     const Settings& cfg = config::Get();
     rig::RenderRequest req;
     bool haveReq = rig::TakeRequestForPresent(req);
+    // Debug (JWE3VR_aer.req): the next presented frames, each saved with the eye and tick it is paired with, to
+    // check the alternate-eye pairing (with a large IPDScale the two eyes' frames differ visibly).
+    static int s_aerDump = 0, s_aerIndex = 0;
+    if (s_aerDump == 0 && now - g_lastConfigCheck < 50) {
+        std::wstring aerReq = ModuleDir() + L"JWE3VR_aer.req";
+        if (GetFileAttributesW(aerReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileW(aerReq.c_str());
+            s_aerDump = 8;
+            s_aerIndex = 0;
+        }
+    }
+    if (s_aerDump > 0) {
+        wchar_t file[64];
+        swprintf(file, 64, L"JWE3VR_aer%d_eye%d.bmp", s_aerIndex, haveReq ? req.eye : -1);
+        bool inFlight = false;
+        DebugDump(bb, D3D12_RESOURCE_STATE_PRESENT, file, inFlight);
+        LOGI("aer debug: present %d paired with eye %d, tick %llu (lag %d)", s_aerIndex, haveReq ? req.eye : -1,
+             (unsigned long long)(haveReq ? req.tick : 0), config::Get().aerPresentLag);
+        ++s_aerIndex;
+        --s_aerDump;
+    }
     rig::AnchorKind kind = rig::CurrentKind();
     bool immersive = cfg.enabled && haveSwaps && haveReq && kind != rig::AnchorKind::Off && kind != rig::AnchorKind::Screen;
 
