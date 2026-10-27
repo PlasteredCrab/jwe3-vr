@@ -263,8 +263,48 @@ Camera.RequestSeatCamera = function(cmm, tWorld, Gameplay)
     return sWhich
 end
 
-Camera.ManagerTick = function(nDt)
+-- JWE3: the world API's CameraModeManager is the camera component instance itself (its tEntities are readable),
+-- and it writes the main camera every frame after the VR manager, so a write from the manager never reaches the
+-- frame - only the FOV does, because the game re-sends its FOV only when it changes (seen in game: IPDScale 40
+-- moved neither eye). The module patch (Camera.Patch) does not reach it, the instance was made before; wrapping
+-- the instance's own Advance runs the rig right after the game's write.
+-- Per instance (a new park makes a new one); the manager path takes over whenever no instance tick came since its
+-- last tick.
+Camera.bInstanceDriven = false
+Camera.nInstanceTicks, Camera.nInstanceSeen = 0, 0
+Camera.TryWrapInstance = function(cmm)
+    if global.type(cmm) ~= "table" or Camera.oWrapped == cmm then return end
+    Camera.oWrapped = cmm
+    if global.rawget(cmm, "__JWE3VRWrapped") then return end
+    local fnAdvance = cmm.Advance
+    if global.type(fnAdvance) ~= "function" then
+        Bridge.Text("camera: the camera manager instance has no Advance to wrap")
+        return
+    end
+    global.rawset(cmm, "__JWE3VRWrapped", true)
+    cmm.Advance = function(self, nDt, nUnscaledDt, ...)
+        local a, b, c = fnAdvance(self, nDt, nUnscaledDt, ...)
+        Camera.nInstanceTicks = Camera.nInstanceTicks + 1
+        if not Camera.bInstanceDriven then
+            Camera.bInstanceDriven = true
+            Bridge.Text("camera: driven from the camera manager's own Advance (right after the game's write)")
+        end
+        local bOk, sErr = pcall(Camera.ManagerTick, nUnscaledDt or nDt, true)
+        if not bOk and not Camera.bInstanceError then
+            Camera.bInstanceError = true
+            Bridge.Text("camera (instance path) failed: " .. tostring(sErr))
+        end
+        return a, b, c
+    end
+    Bridge.Text("camera: wrapped the camera manager instance's Advance")
+end
+
+Camera.ManagerTick = function(nDt, bFromInstance)
     if not Bridge.IsLoaded() then return end
+    if not bFromInstance and Camera.nInstanceTicks ~= Camera.nInstanceSeen then
+        Camera.nInstanceSeen = Camera.nInstanceTicks -- the camera manager's Advance drives it
+        return
+    end
     local camID = api.camera.GetMainCameraID()
     if not camID or camID <= 0 then return end
     local current = api.transform.GetTransform(camID)
@@ -288,6 +328,7 @@ Camera.ManagerTick = function(nDt)
     local bOk, tWorld = pcall(api.world.GetWorldAPIs)
     if not bOk or global.type(tWorld) ~= "table" then tWorld = nil end
     local cmm = tWorld and tWorld.CameraModeManager
+    if not bFromInstance then Camera.TryWrapInstance(cmm) end
     local sGameMode = nil
     if cmm and cmm.GetCurrentModeName then
         local bOk2, s = pcall(cmm.GetCurrentModeName, cmm)
@@ -306,14 +347,27 @@ Camera.ManagerTick = function(nDt)
     end
     if nKind == K.Gunner then
         -- Sit at the gun mount, oriented like the vehicle body (the turret must not swing the world).
-        local nVehicle, nGunner = Gameplay and Gameplay.GunnerIDs()
+        local nVehicle, nGunner = nil, nil
+        if Gameplay then nVehicle, nGunner = Gameplay.GunnerIDs() end -- not "Gameplay and ...": that keeps one result
         local tWorldAPIs = api.world.GetWorldAPIs()
         local mount = nGunner and tWorldAPIs and tWorldAPIs.weapons and tWorldAPIs.weapons:GetCameraAttachTransform(nGunner)
         local body = nVehicle and api.transform.GetTransform(nVehicle)
         if mount and body then
-            vPos, vR, vU, vF = mount:GetPos(), body:GetR(), body:GetU(), body:GetF()
+            local vMount = mount:GetPos()
+            if Camera.nGunMount ~= nGunner then
+                Camera.nGunMount = nGunner
+                local dx, dy, dz = vMount:GetX() - vPos:GetX(), vMount:GetY() - vPos:GetY(), vMount:GetZ() - vPos:GetZ()
+                Bridge.Text("gun mount of gunner " .. tostring(nGunner) .. " is " ..
+                            global.string.format("%.1f", global.math.sqrt(dx * dx + dy * dy + dz * dz)) .. " m from the game camera")
+            end
+            vPos, vR, vU, vF = vMount, body:GetR(), body:GetU(), body:GetF()
         else
             nKind = K.Seat -- no gun seat known: sit where the game camera is
+            if Camera.nGunFallback ~= nGunner then
+                Camera.nGunFallback = nGunner
+                Bridge.Text("gun seat not found (vehicle " .. tostring(nVehicle) .. ", gunner " .. tostring(nGunner) .. ", mount " ..
+                            global.type(mount) .. ", body " .. global.type(body) .. "); sitting at the game camera")
+            end
         end
     end
     if sMode ~= Camera.sMode or nKind ~= Camera.nKind or sSeat ~= Camera.sSeat or sGameMode ~= Camera.sGameMode then
@@ -335,8 +389,9 @@ Camera.ManagerTick = function(nDt)
                                            Vector3:new(px, py, pz))
     api.transform.SetTransform(camID, transform)
     api.camera.SetFOVY(camID, nFovY)
-    Camera.lastSet = transform
+    Camera.lastSet, Camera.nLastFov, Camera.nLastCam = transform, nFovY, camID
 end
+
 
 -- The same rig step from a camera mode's Advance (JWE3 path): rewrites the mode's final transform and FOV.
 Camera.AfterModeAdvance = function(sMode, tModeData, tWorldAPIs, _nDt)

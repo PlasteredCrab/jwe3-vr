@@ -1,6 +1,34 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.9  The rig really drives the frame; the virtual pad reaches JWE3; gun seat (runs 47-56, headset not worn)
+    - Correction to 0.0.4-0.0.8: the rig's camera transform never reached the rendered frame, only its FOV. The game's
+      camera manager rewrites the main camera every frame after the VR manager, and re-sends the FOV only when its own
+      value changes. Found with IPDScale = 40 (the two eyes ~76 m apart in the park model): consecutive frames were
+      identical, in the park and in the gun seat. The earlier "level horizon / eye height" readings matched the game
+      camera because an untracked rig adds no offset. The run 46 helicopter seat is still right: that is the game's own
+      first-person camera, requested by the mod.
+    - Fix: the world API's CameraModeManager is the component instance itself, so its Advance is wrapped (per
+      instance) and the rig runs right after the game's write. Log: "camera: driven from the camera manager's own
+      Advance". Run 53 at IPDScale 40: frames now alternate between two eye positions (facility at x 227 / 265), and
+      the view carries the resting headset's pose (tilted) - head pose on top of the anchor. Run 54: driver's seat and
+      gun mount views both from the rig. The manager path takes over if the wrapped instance stops ticking.
+    - Virtual pad: JWE3 never called XInputGetState / GetCapabilities (counted on xinput1_4 and xinput9_1_0). The game
+      finds Xbox pads by their keystrokes: each frame it drains XInputGetKeystroke(any user), and a keystroke from a user
+      with an empty slot makes it probe that slot and read it from then on (0x1417ff9c0 / 0x1417ffeb0). The mod now
+      hooks XInputGetKeystroke and announces slot 0 with one ignored keystroke (no virtual key) while the virtual pad
+      should be connected but is not being read; slot 0 then stays connected (at rest when Lua does not pass input).
+      Run 49: 2050 keystroke polls, slot 0 probed and read; a scripted RT + left stick drove the jeep forward and right;
+      the HUD switched to Xbox glyphs (B back, LB site map, Y aim mode, LT/RT brake/gas, X handbrake). The first input
+      after the pad appears only makes it the active device (seen: Y alone did not register, LT then Y did).
+    - Gun seat (runs 49-54): pad Y enters it ("ui mode gunner in", camera mode Gunner). Bug fixed: "local a, b =
+      Gameplay and Gameplay.GunnerIDs()" kept only the first result, so the gunner id was always nil and the gun mount
+      never found. Now rig kind 4 at the gun mount (re/work/run54_pair.png).
+    - Controls (code only, needs the VR controllers): in vehicles the tablet is off-hand grip + B/Y (plain off-hand Y is
+      the game's Aim Mode), and both grips on the wheel no longer press LB / RB (LB opens the site map in JWE3).
+    - Also checked: no update (build 1792088119), no crash, no Sophos detection; one launch failed silently right after
+      a forced end (Steam), the next worked.
+
 2026-10-27  0.0.8  Vehicle seats in first person: jeep and capture helicopter (remote runs 38-46, headset not worn)
     - Frame rate A/B (run 38): park at 2-3 fps with the mod on and with it switched off live (Enabled = 0, the game's
       own camera and UI back in the frame), so the low rate is the remote session, not the mod.

@@ -302,8 +302,11 @@ Gameplay.Advance = function(_nDt)
     local nKind = Camera.nKind
     local bImmersive = nKind == K.Overview or nKind == K.Ground or nKind == K.Seat or nKind == K.Gunner
 
-    -- Tablet: off-hand B/Y shows the flat game screen (with its HUD) in front of you.
-    if Pressed(secondaryOff) and bImmersive then
+    -- Tablet: off-hand B/Y shows the flat game screen (with its HUD) in front of you. In a vehicle the off-hand
+    -- grip must be held too: there plain off-hand Y is pad Y, the game's Aim Mode (JWE3: into the gun seat).
+    local bVehicle = nKind == K.Seat or nKind == K.Gunner
+    local bTabletChord = bVehicle and gripOff > 0.6
+    if Pressed(secondaryOff) and bImmersive and (not bVehicle or bTabletChord) then
         Gameplay.bTablet = not Gameplay.bTablet
         if Gameplay.bTablet then Bridge.PlaceScreen() end
     end
@@ -353,6 +356,12 @@ Gameplay.Advance = function(_nDt)
                 lx = Clamp(nAngle / (math.pi * 0.5), -1, 1)
             end
         end
+        -- Buttons as mapped natively, but the grips held for the wheel are not LB / RB (JWE3: LB opens the site
+        -- map), and the tablet chord (off-hand grip + Y) is not Aim Mode.
+        nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
+        if gl > 0.6 and gr > 0.6 then nButtons = nButtons & ~0x0300 end
+        if bTabletChord then nButtons = nButtons & ~XI.Y end
+        nMask = nMask + Ov.Buttons
     elseif nKind == K.Gunner then
         nPad = Bridge.Pad.Passthrough
         local bOk, cx, cy, bValid = pcall(Gameplay.GunnerAim)
@@ -360,6 +369,9 @@ Gameplay.Advance = function(_nDt)
             nMask = nMask + Ov.RX + Ov.RY
             rx, ry = cx, cy
         end
+        nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
+        if bTabletChord then nButtons = nButtons & ~XI.Y end
+        nMask = nMask + Ov.Buttons
         -- Off-hand stick left/right cycles dart / medicine / scanner.
         nMask = nMask + Ov.LX
         if not tPrev.ammoLatch and math.abs(stickOffX) > 0.7 then

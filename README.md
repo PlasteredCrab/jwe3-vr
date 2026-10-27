@@ -9,10 +9,12 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
 > **Status: first runs in JWE3 (game 1.5.5, build 1792088119), headset not worn.** Seen working in the game: the
 > mod loads without a proxy DLL, the Lua bridge and hooks run, OpenXR starts on SteamVR, and in a Sandbox park the
-> VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on), the game's UI is moved
-> out of the eye images into the in-world HUD panel's texture, and taking direct control of a ranger jeep or the
-> capture helicopter puts you in its seat in first person. Not yet seen: head motion and stereo depth in a worn
-> headset, the HUD panel itself in the headset, controllers, driving or flying, walking (guest view), and
+> VR rig drives the rendered camera (headset FOV, the two eyes' positions, foveated rendering on), the game's UI is
+> moved out of the eye images into the in-world HUD panel's texture, taking direct control of a ranger jeep or the
+> capture helicopter puts you in its seat in first person, the gun seat puts you at the gun mount, and the
+> virtual Xbox pad reaches the game (a scripted pad drove the jeep and entered the gun seat). Not yet seen: head
+> motion and stereo depth in a worn headset, the HUD panel itself in the headset, the VR controllers, walking
+> (guest view), and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
@@ -76,7 +78,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | --- | --- | --- |
 | Everywhere | Click both thumbsticks | Recentre |
 | Everywhere | Menu button | Pause (hold off-hand grip: Back) |
-| Everywhere | Off-hand B/Y | Tablet: the game screen with its HUD in front of you |
+| Park, walking | Off-hand B/Y | Tablet: the game screen with its HUD in front of you |
+| Jeep / helicopter seat, gun seat | Off-hand grip + off-hand B/Y | Tablet (plain off-hand Y belongs to the game there) |
 | Flat screen, tablet; in-world HUD in the park overview | Point with dominant hand | Moves the cursor |
 | Flat screen, tablet; in-world HUD in the park overview | Dominant trigger / grip | Left click / right click |
 | Park overview | Dominant laser + trigger | Pick, build, select (the dot shows where) |
@@ -98,6 +101,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep / helicopter seat | Left stick | Steer |
 | Jeep / helicopter seat | Both grips, turn your hands | Steering wheel |
 | Jeep / helicopter seat | Head | Look around |
+| Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3) |
+| Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
 | Gun seat | Dominant hand | Aim (the gun follows it) |
 | Gun seat | Dominant trigger | Fire (haptic kick) |
 | Gun seat | Off-hand stick left / right | Previous / next ammo |
@@ -228,7 +233,11 @@ The file is written with comments on first run. The ones you are most likely to 
 - **3D looks wrong (inside-out, doubled, one eye a frame late):** set `AERPresentLag` to 0, 1 or 2, or flip `SwapEyes`.
 - **Camera does not follow the head:** the Lua side reports into `JWE3VR.log` (lines starting `lua:`). Expect
   "hooks installed", "VR manager Init (park loaded)", "gameplay init done", then "camera tick (manager path): ...
-  VR override 1.0". "bridge: unexpected Lua stack layout" means a game update changed the Lua layout.
+  VR override 1.0" and "camera: driven from the camera manager's own Advance". Without that last line the game's
+  camera overwrites the rig every frame and only the FOV changes. "bridge: unexpected Lua stack layout" means a game
+  update changed the Lua layout.
+- **Vehicles ignore the controllers:** JWE3 adopts a pad only after it sees a keystroke from it; look for "virtual
+  pad: announced on XInput slot 0" and, in `JWE3VR_shot.req` lines, XInputGetState calls on slot 0.
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), `FOCUS`, keys and pad buttons (format in `input.cpp`). The game reads
   no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).

@@ -15,8 +15,19 @@ using namespace vm;
 
 using GetStateFn = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 using GetCapsFn = DWORD(WINAPI*)(DWORD, DWORD, XINPUT_CAPABILITIES*);
-static GetStateFn o_GetState;
-static GetCapsFn o_GetCaps;
+using GetKeystrokeFn = DWORD(WINAPI*)(DWORD, DWORD, PXINPUT_KEYSTROKE);
+
+// The game may read the pad through any XInput DLL in the process: JWE3 imports xinput1_4 but also has xinput9_1_0
+// loaded (its own implementation, not a forwarder), and DirectInput 8. Each DLL gets the same hooks; the call
+// counts per DLL (DebugSummary) tell which one the game polls.
+constexpr int kXInputDlls = 3;
+static const wchar_t* const kXInputNames[kXInputDlls] = {L"xinput1_4.dll", L"xinput9_1_0.dll", L"xinput1_3.dll"};
+static const char* const kXInputShort[kXInputDlls] = {"1_4", "9_1_0", "1_3"};
+static GetStateFn o_GetState[kXInputDlls];
+static GetCapsFn o_GetCaps[kXInputDlls];
+static GetKeystrokeFn o_GetKeystroke[kXInputDlls];
+static std::atomic<unsigned> g_dllStateCalls[kXInputDlls], g_dllCapsCalls[kXInputDlls], g_dllKeyCalls[kXInputDlls];
+static std::atomic<ULONGLONG> g_lastState0{0}, g_lastAnnounce{0}; // the game read slot 0 / we announced it
 
 static std::mutex g_lock;
 static LuaFlags g_flags;
@@ -195,10 +206,16 @@ void DebugTick() {
 std::string DebugSummary() {
     char buf[256];
     HWND fg = GetForegroundWindow();
-    snprintf(buf, sizeof(buf), "XInputGetState calls %u/%u/%u/%u, GetCapabilities %u; game window %s",
-             g_getStateCalls[0].load(), g_getStateCalls[1].load(), g_getStateCalls[2].load(), g_getStateCalls[3].load(),
-             g_getCapsCalls.load(), !g_hwnd ? "unknown" : (fg == g_hwnd ? "in the foreground" : "NOT in the foreground"));
-    return buf;
+    snprintf(buf, sizeof(buf), "XInputGetState calls %u/%u/%u/%u, GetCapabilities %u (by DLL, state/caps/keystroke: ", g_getStateCalls[0].load(),
+             g_getStateCalls[1].load(), g_getStateCalls[2].load(), g_getStateCalls[3].load(), g_getCapsCalls.load());
+    std::string s = buf;
+    for (int i = 0; i < kXInputDlls; ++i) {
+        snprintf(buf, sizeof(buf), "%s%s %u/%u/%u", i ? ", " : "", kXInputShort[i], g_dllStateCalls[i].load(), g_dllCapsCalls[i].load(),
+                 g_dllKeyCalls[i].load());
+        s += buf;
+    }
+    s += std::string("); game window ") + (!g_hwnd ? "unknown" : (fg == g_hwnd ? "in the foreground" : "NOT in the foreground"));
+    return s;
 }
 
 // Fills pad 0 from the running script; false when no script is playing.
@@ -212,21 +229,51 @@ static bool ScriptedPad(XINPUT_STATE* state) {
     return true;
 }
 
-static DWORD WINAPI Hk_GetState(DWORD index, XINPUT_STATE* state) {
+static DWORD PadState(DWORD index, XINPUT_STATE* state, GetStateFn original) {
     if (index < 4) ++g_getStateCalls[index];
+    if (index == 0) g_lastState0 = GetTickCount64();
     if (index == 0 && ScriptedPad(state)) return ERROR_SUCCESS;
     if (index == 0 && config::Get().virtualPad) {
         std::lock_guard<std::mutex> l(g_lock);
-        if (g_padLive && g_flags.pad == PadMode::Passthrough && state) {
-            state->dwPacketNumber = g_packet;
-            state->Gamepad = g_pad;
+        if (g_padLive && state) {
+            // Connected whenever the controllers are: the pad's input only while Lua passes it through, else at
+            // rest (a pad that came and went would be dropped and found again by the game every second).
+            bool through = g_flags.pad == PadMode::Passthrough;
+            state->dwPacketNumber = through ? g_packet : 1;
+            state->Gamepad = through ? g_pad : XINPUT_GAMEPAD{};
             return ERROR_SUCCESS;
         }
     }
-    return o_GetState(index, state);
+    return original(index, state);
 }
 
-static DWORD WINAPI Hk_GetCaps(DWORD index, DWORD flags, XINPUT_CAPABILITIES* caps) {
+static bool PadWanted() {
+    std::lock_guard<std::mutex> l(g_lock);
+    return !g_script.empty() || (config::Get().virtualPad && g_padLive);
+}
+
+// JWE3 finds an Xbox pad by its keystroke events: every frame it drains XInputGetKeystroke(XUSER_INDEX_ANY), and a
+// keystroke from a user whose slot is empty makes it probe that slot (XInputGetCapabilities) and read it with
+// XInputGetState from then on (0x1417ff9c0 / 0x1417ffeb0 in build 1792088119). It never polls an empty slot, so
+// while the virtual pad should be connected but slot 0 is not being read, one keystroke announces it: no virtual
+// key (the game handles only VK_PAD_A..VK_PAD_RTHUMB_PRESS), key up, user 0. At most once a second.
+static DWORD PadKeystroke(DWORD index, DWORD reserved, PXINPUT_KEYSTROKE ks, GetKeystrokeFn original) {
+    if (ks && (index == XUSER_INDEX_ANY || index == 0) && PadWanted()) {
+        ULONGLONG now = GetTickCount64();
+        if (now - g_lastState0.load() > 500 && now - g_lastAnnounce.load() > 1000) {
+            g_lastAnnounce = now;
+            memset(ks, 0, sizeof(*ks));
+            ks->Flags = XINPUT_KEYSTROKE_KEYUP;
+            ks->UserIndex = 0;
+            static std::atomic<int> logged{0};
+            if (logged.fetch_add(1) < 4) LOGI("virtual pad: announced on XInput slot 0 (the game finds pads by their keystrokes)");
+            return ERROR_SUCCESS;
+        }
+    }
+    return original(index, reserved, ks);
+}
+
+static DWORD PadCaps(DWORD index, DWORD flags, XINPUT_CAPABILITIES* caps, GetCapsFn original) {
     ++g_getCapsCalls;
     bool scripted = false;
     {
@@ -234,7 +281,7 @@ static DWORD WINAPI Hk_GetCaps(DWORD index, DWORD flags, XINPUT_CAPABILITIES* ca
         scripted = !g_script.empty();
     }
     if (index == 0 && (scripted || (config::Get().virtualPad && g_padLive)) && caps) {
-        DWORD r = o_GetCaps(index, flags, caps);
+        DWORD r = original(index, flags, caps);
         if (r == ERROR_SUCCESS) return r;
         memset(caps, 0, sizeof(*caps));
         caps->Type = XINPUT_DEVTYPE_GAMEPAD;
@@ -244,20 +291,54 @@ static DWORD WINAPI Hk_GetCaps(DWORD index, DWORD flags, XINPUT_CAPABILITIES* ca
         caps->Gamepad.sThumbLX = caps->Gamepad.sThumbLY = caps->Gamepad.sThumbRX = caps->Gamepad.sThumbRY = (SHORT)0xFFC0;
         return ERROR_SUCCESS;
     }
-    return o_GetCaps(index, flags, caps);
+    return original(index, flags, caps);
+}
+
+template <int N> static DWORD WINAPI Hk_GetState(DWORD index, XINPUT_STATE* state) {
+    ++g_dllStateCalls[N];
+    return PadState(index, state, o_GetState[N]);
+}
+
+template <int N> static DWORD WINAPI Hk_GetCaps(DWORD index, DWORD flags, XINPUT_CAPABILITIES* caps) {
+    ++g_dllCapsCalls[N];
+    return PadCaps(index, flags, caps, o_GetCaps[N]);
+}
+
+template <int N> static DWORD WINAPI Hk_GetKeystroke(DWORD index, DWORD reserved, PXINPUT_KEYSTROKE ks) {
+    ++g_dllKeyCalls[N];
+    return PadKeystroke(index, reserved, ks, o_GetKeystroke[N]);
+}
+
+template <int N> static bool HookXInput(HMODULE m) {
+    std::string name = "XInputGetState (xinput" + std::string(kXInputShort[N]) + ")";
+    bool ok = hooks::Create(name.c_str(), (void*)GetProcAddress(m, "XInputGetState"), (void*)&Hk_GetState<N>, (void**)&o_GetState[N]);
+    name = "XInputGetCapabilities (xinput" + std::string(kXInputShort[N]) + ")";
+    ok &= hooks::Create(name.c_str(), (void*)GetProcAddress(m, "XInputGetCapabilities"), (void*)&Hk_GetCaps<N>, (void**)&o_GetCaps[N]);
+    if (void* key = (void*)GetProcAddress(m, "XInputGetKeystroke")) { // not in xinput9_1_0
+        name = "XInputGetKeystroke (xinput" + std::string(kXInputShort[N]) + ")";
+        hooks::Create(name.c_str(), key, (void*)&Hk_GetKeystroke<N>, (void**)&o_GetKeystroke[N]);
+    }
+    return ok;
 }
 
 bool InstallHooks() {
-    HMODULE x = GetModuleHandleW(L"xinput1_4.dll");
-    if (!x) x = LoadLibraryW(L"xinput1_4.dll");
-    if (!x) {
-        LOGE("xinput1_4.dll not found; no virtual pad");
-        return false;
+    // System DLLs only (System32): load the two Windows ships so their exports are hooked even if the game loads
+    // them later; xinput1_3 (DirectX redistributable) only if the game already has it.
+    bool any = false;
+    HMODULE m[kXInputDlls];
+    for (int i = 0; i < kXInputDlls; ++i) {
+        m[i] = GetModuleHandleW(kXInputNames[i]);
+        if (!m[i] && i < 2) {
+            wchar_t path[MAX_PATH];
+            GetSystemDirectoryW(path, MAX_PATH);
+            m[i] = LoadLibraryW((std::wstring(path) + L"\\" + kXInputNames[i]).c_str());
+        }
     }
-    bool ok = hooks::Create("XInputGetState", (void*)GetProcAddress(x, "XInputGetState"), (void*)Hk_GetState, (void**)&o_GetState);
-    ok &= hooks::Create("XInputGetCapabilities", (void*)GetProcAddress(x, "XInputGetCapabilities"), (void*)Hk_GetCaps,
-                        (void**)&o_GetCaps);
-    return ok;
+    if (m[0]) any |= HookXInput<0>(m[0]);
+    if (m[1]) any |= HookXInput<1>(m[1]);
+    if (m[2]) any |= HookXInput<2>(m[2]);
+    if (!any) LOGE("no XInput DLL could be hooked; no virtual pad");
+    return any;
 }
 
 void SetGameWindow(HWND hwnd) { g_hwnd = hwnd; }
