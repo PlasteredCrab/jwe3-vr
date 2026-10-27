@@ -1,6 +1,25 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  Handover after the unattended runs (0.0.9 - 0.0.25, remote runs 59-101, headset never worn)
+    - Seen working without the headset on: the VR rig on the rendered frame in the park overview, the jeep and
+      helicopter seats, both gun seats (gunner body hidden), photo mode (jeep) and the guest view (walking);
+      the in-world HUD (game UI and pause menu off the eyes, onto the panel's texture); a second park after
+      leaving the first; the virtual pad driving, lifting off, entering gun seats; laser clicks through posted
+      window messages; an 18-minute soak with flat memory. The mod sends no OS-level input; Sophos logs show
+      nothing about the game or mod.
+    - Never seen: anything in a worn headset - head motion, stereo depth, the HUD panel itself, the controllers,
+      and no frame has yet been handed to the headset for display (that only happens in OpenXR state 5).
+      First thing to do: README "First headset test", steps 1-12, each with the log line that confirms it; if
+      the headset shows nothing, the README troubleshooting entry for "state 5" says what to look for.
+    - Known limits: per-eye TAA and sync stereo need the view constant buffer, out of reach with the -NoProxy
+      install; the game refuses team orders in the test park (its response facility is not operational); the
+      capture helicopter has no photo mode; foveation saves little in JWE3 (compute shading).
+    - The test park was changed once: run 75's script built a second response facility (still there); the
+      scripts build nothing now. JWE3VR.ini in the game folder matches the shipped defaults (checked 0.0.22).
+    - Remote tools: re/remote/to_continue.sh (into the park), drive.sh (a seat, no clicks), vehicle.sh,
+      guest.sh, reload.sh, hudcheck.sh, step.sh (pad script + screenshot); JWE3VR_*.req debug requests (README).
+
 2026-10-27  0.0.25  Audit of per-frame warnings and errors (run 101)
     - Every LOGW / LOGE in the DLL checked for whether its condition can repeat every frame. OpenXR init, the
       eye swapchains, the HUD swapchain and the foveation image already fail once (guarded or remembered); the
