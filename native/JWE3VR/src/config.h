@@ -8,6 +8,8 @@ namespace jvr {
 
 enum class StereoMode { Mono = 0, AER = 1, Sync = 2 };
 
+enum class UiDetect { Texture, Backbuffer, Markers };
+
 struct Settings {
     // [General]
     bool enabled = true;
@@ -47,6 +49,12 @@ struct Settings {
     // JWE3 draws its UI with Coherent Gameface ("UI (Gameface)", Renoir). "GUI" is left out: it would
     // also match WorldGUIPass (in-world icons). Unverified until a MarkerDump run.
     std::string uiMarkers = "Gameface,Renoir,Scaleform,UIRender,HUD";
+    // How UI drawing is recognised. Retail JWE3 emits no pass markers and draws its UI into an 8-bit texture of
+    // its own, composited into the final image by a compute pass: by default ("texture") that texture is found
+    // and its draws redirected. "backbuffer": every render-target binding of the backbuffer (or of the image the
+    // game copies into it) after the first uiSkipBackbufferBinds of each frame; "markers": the uiMarkers passes.
+    UiDetect uiDetect = UiDetect::Texture;
+    int uiSkipBackbufferBinds = 0;
     float hudDistance = 1.4f;     // in-world HUD panel distance (m)
     float hudWidth = 1.6f;
     float hudDropDeg = 12.0f;     // panel sits this far below eye level

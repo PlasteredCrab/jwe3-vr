@@ -93,16 +93,48 @@ end
 ------------------------------------------------------------------------
 -- JWE3's DriveVehicleUIMode.TransitionIn(self, _tInitData) switches to the first-person camera itself
 -- when _tInitData.StartInFirstPerson is set and the vehicle can switch camera; ask for that in VR.
+-- The player-facing UI mode decides the rig kind on JWE3: the camera component runs in a Lua state the mod
+-- cannot reach, but UI modes are Lua objects in ours (their TransitionIn/Out are looked up on the module).
+-- Tag -> camera mode name (Camera.tModeKinds); nil = whatever the camera manager reports.
+Gameplay.sUIMode = nil
+Gameplay.tUIModeCamera = {drive = "FirstPersonVehicle", gunner = "Gunner", photo = "FirstPersonVehicle",
+                          guest = "Guest", cinematic = "Animated"}
+
+local SetUIMode = function(sTag, bOn)
+    if bOn then
+        Gameplay.sUIMode = sTag
+    elseif Gameplay.sUIMode == sTag then
+        Gameplay.sUIMode = nil
+    end
+    Bridge.Text("ui mode " .. sTag .. (bOn and " in" or " out"))
+end
+
+-- Wraps a UI mode module's TransitionIn/Out to track sTag (fnBeforeIn may adjust the init data).
+Gameplay.PatchUIMode = function(tModule, sTag, fnBeforeIn)
+    if global.type(tModule) ~= "table" or tModule.__JWE3VRUIPatched then return end
+    local fnIn, fnOut = tModule.TransitionIn, tModule.TransitionOut
+    if global.type(fnIn) ~= "function" or global.type(fnOut) ~= "function" then return end
+    tModule.__JWE3VRUIPatched = true
+    tModule.TransitionIn = function(self, ...)
+        if fnBeforeIn then pcall(fnBeforeIn, self, ...) end
+        pcall(SetUIMode, sTag, true)
+        return fnIn(self, ...)
+    end
+    tModule.TransitionOut = function(self, ...)
+        pcall(SetUIMode, sTag, false)
+        return fnOut(self, ...)
+    end
+end
+
+-- JWE3's DriveVehicleUIMode.TransitionIn(self, _tInitData) switches to the first-person camera itself when
+-- _tInitData.StartInFirstPerson is set and the vehicle can switch camera; ask for that in VR. Drones are
+-- driven through the same mode.
 Gameplay.PatchDriveMode = function(tModule)
-    if tModule.__JWE3VRPatched then return end
-    tModule.__JWE3VRPatched = true
-    local fnIn = tModule.TransitionIn
-    tModule.TransitionIn = function(self, _tInitData, ...)
+    Gameplay.PatchUIMode(tModule, "drive", function(self, _tInitData)
         if Bridge.IsLoaded() and global.type(_tInitData) == "table" and _tInitData.StartInFirstPerson == nil then
             _tInitData.StartInFirstPerson = true
         end
-        return fnIn(self, _tInitData, ...)
-    end
+    end)
 end
 
 ------------------------------------------------------------------------
@@ -123,12 +155,14 @@ end
 
 Gameplay.GunnerAim = function()
     local tModeData = Camera.tModeData
-    if not tModeData or not tModeData.gunnerID then return 0, 0, false end
+    local _, nGunner = Gameplay.GunnerIDs()
+    local gunnerID = (tModeData and tModeData.gunnerID) or nGunner
+    if not gunnerID then return 0, 0, false end
     local WeaponsAPI = api.world.GetWorldAPIs().weapons
     -- Measure both directions in the vehicle body's frame: a frame that turned with the turret would
     -- move with the aim and the error would never close.
-    local frame = Gameplay.GunVehicleTransform() or WeaponsAPI:GetCameraAttachTransform(tModeData.gunnerID)
-    local vAim = WeaponsAPI:GetCameraAimDirection(tModeData.gunnerID)
+    local frame = Gameplay.GunVehicleTransform() or WeaponsAPI:GetCameraAttachTransform(gunnerID)
+    local vAim = WeaponsAPI:GetCameraAimDirection(gunnerID)
     local bValid, ox, oy, oz, fx, fy, fz = Bridge.Hand(Gameplay.nDominant)
     if not frame or not vAim or bValid ~= 1 then return 0, 0, false end
     local vR, vU, vF = frame:GetR(), frame:GetU(), frame:GetF()
@@ -150,17 +184,26 @@ end
 Gameplay.oGunnerMode = nil
 
 Gameplay.PatchGunnerMode = function(tModule)
-    if tModule.__JWE3VRPatched then return end
+    if global.type(tModule) ~= "table" or tModule.__JWE3VRPatched then return end
     tModule.__JWE3VRPatched = true
     local fnIn, fnOut = tModule.TransitionIn, tModule.TransitionOut
     tModule.TransitionIn = function(self, ...)
         Gameplay.oGunnerMode = self
+        pcall(SetUIMode, "gunner", true)
         return fnIn(self, ...)
     end
     tModule.TransitionOut = function(self, ...)
         if Gameplay.oGunnerMode == self then Gameplay.oGunnerMode = nil end
+        pcall(SetUIMode, "gunner", false)
         return fnOut(self, ...)
     end
+end
+
+-- The active gun seat's entities (JWE3 VehicleGunnerUIMode: nVehicleEntityID, nGunnerEntityID).
+Gameplay.GunnerIDs = function()
+    local oMode = Gameplay.oGunnerMode
+    if not oMode then return nil, nil end
+    return oMode.nVehicleEntityID or oMode.vehicle, oMode.nGunnerEntityID
 end
 
 Gameplay.SwitchAmmo = function(bNext)
@@ -172,9 +215,9 @@ end
 
 -- Vehicle body transform of the active gun seat (does not turn with the turret).
 Gameplay.GunVehicleTransform = function()
-    local oMode = Gameplay.oGunnerMode
-    if not oMode or not oMode.vehicle then return nil end
-    return api.transform.GetTransform(oMode.vehicle)
+    local nVehicle = Gameplay.GunnerIDs()
+    if not nVehicle then return nil end
+    return api.transform.GetTransform(nVehicle)
 end
 
 Gameplay.OnWeaponFired = function()

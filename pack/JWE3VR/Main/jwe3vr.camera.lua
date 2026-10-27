@@ -196,8 +196,9 @@ local SameTransform = function(a, b)
     local pa, pb = a:GetPos(), b:GetPos()
     local fa, fb = a:GetF(), b:GetF()
     local d = global.math.abs
-    return d(pa:GetX() - pb:GetX()) + d(pa:GetY() - pb:GetY()) + d(pa:GetZ() - pb:GetZ()) < 1e-4 and
-           d(fa:GetX() - fb:GetX()) + d(fa:GetY() - fb:GetY()) + d(fa:GetZ() - fb:GetZ()) < 1e-5
+    -- 1 mm / 0.001: loose enough for the engine's quaternion round trip, far below any real camera move.
+    return d(pa:GetX() - pb:GetX()) + d(pa:GetY() - pb:GetY()) + d(pa:GetZ() - pb:GetZ()) < 1e-3 and
+           d(fa:GetX() - fb:GetX()) + d(fa:GetY() - fb:GetY()) + d(fa:GetZ() - fb:GetZ()) < 1e-3
 end
 
 Camera.ManagerTick = function(nDt)
@@ -206,29 +207,52 @@ Camera.ManagerTick = function(nDt)
     if not camID or camID <= 0 then return end
     local current = api.transform.GetTransform(camID)
     if not current then return end
-    if not SameTransform(current, Camera.lastSet) then Camera.lastAnchor = current end
+    if SameTransform(current, Camera.lastSet) then
+        Camera.nOwnReads = (Camera.nOwnReads or 0) + 1 -- the game did not write the camera since our last write
+    else
+        Camera.lastAnchor = current
+    end
+    Camera.nTicks = (Camera.nTicks or 0) + 1
     local anchor = Camera.lastAnchor
     if not anchor then return end
     if not Camera.bManagerPathLogged then
         Camera.bManagerPathLogged = true
         Bridge.Text("camera: driven from the VR manager (camera component not reachable)")
     end
-    -- The current mode name, if the world API exposes the camera manager to this Lua state.
-    local sMode = Camera.sMode or "Standard"
-    local bOk, tWorld = pcall(api.world.GetWorldAPIs)
-    local cmm = bOk and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
-    if cmm and cmm.GetCurrentModeName then
-        local bOk2, s = pcall(cmm.GetCurrentModeName, cmm)
-        if bOk2 and global.type(s) == "string" then sMode = s end
+    -- Camera mode: the player-facing UI mode first (tracked in this Lua state), else what the camera manager
+    -- reports through the world API, else Standard.
+    local Gameplay = global.package and global.package.loaded and global.package.loaded["JWE3VR.Gameplay"]
+    local sTag = Gameplay and Gameplay.sUIMode
+    local sMode = sTag and Gameplay.tUIModeCamera[sTag] or nil
+    if not sMode then
+        sMode = "Standard"
+        local bOk, tWorld = pcall(api.world.GetWorldAPIs)
+        local cmm = bOk and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
+        if cmm and cmm.GetCurrentModeName then
+            local bOk2, s = pcall(cmm.GetCurrentModeName, cmm)
+            if bOk2 and global.type(s) == "string" and Camera.tModeKinds[s] then sMode = s end
+        end
     end
     local nKind = Camera.KindFor(sMode)
-    if sMode ~= Camera.sMode then
+    local vPos, vR, vU, vF = anchor:GetPos(), anchor:GetR(), anchor:GetU(), anchor:GetF()
+    if nKind == K.Gunner then
+        -- Sit at the gun mount, oriented like the vehicle body (the turret must not swing the world).
+        local nVehicle, nGunner = Gameplay and Gameplay.GunnerIDs()
+        local tWorldAPIs = api.world.GetWorldAPIs()
+        local mount = nGunner and tWorldAPIs and tWorldAPIs.weapons and tWorldAPIs.weapons:GetCameraAttachTransform(nGunner)
+        local body = nVehicle and api.transform.GetTransform(nVehicle)
+        if mount and body then
+            vPos, vR, vU, vF = mount:GetPos(), body:GetR(), body:GetU(), body:GetF()
+        else
+            nKind = K.Seat -- no gun seat known: sit where the game camera is
+        end
+    end
+    if sMode ~= Camera.sMode or nKind ~= Camera.nKind then
         Bridge.Log(Bridge.M.CameraKind, nKind)
-        Bridge.Text("camera mode " .. sMode .. " (rig kind " .. tostring(nKind) .. ")")
+        Bridge.Text("camera mode " .. sMode .. " (rig kind " .. tostring(nKind) .. ", ui mode " .. tostring(sTag) .. ")")
     end
     Camera.sMode, Camera.nKind = sMode, nKind
-    local bOverride, px, py, pz, fx, fy, fz, ux, uy, uz, nFovY =
-        Bridge.Tick(nKind, nDt or 0, anchor:GetPos(), anchor:GetR(), anchor:GetU(), anchor:GetF())
+    local bOverride, px, py, pz, fx, fy, fz, ux, uy, uz, nFovY = Bridge.Tick(nKind, nDt or 0, vPos, vR, vU, vF)
     if Camera.nLoggedOverride ~= bOverride then
         Camera.nLoggedOverride = bOverride
         Bridge.Text("camera tick (manager path): mode " .. sMode .. ", VR override " .. tostring(bOverride))

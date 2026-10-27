@@ -1,6 +1,29 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.5  In-world HUD without pass markers: the UI leaves the eye images (remote test, headset not worn)
+    - How JWE3 composes a frame (runs 19-25): the backbuffer is never a render target (2 barriers, 1 copy per frame);
+      the game copies a 1920x1080 R10G10B10A2 image into it, and that image is written by a compute pass (only ever
+      UNORDERED_ACCESS <-> COPY_SOURCE). So the old rule "backbuffer bindings are UI" could never fire.
+    - New debug aid JWE3VR_rt.req (render-target census): logs one frame's render targets (formats, bindings, the
+      state each leaves RENDER_TARGET for) and saves each large one, copied inside the game's own list just before
+      it leaves RENDER_TARGET. Run 23: 19 targets; one 1920x1080 RGBA8 sRGB target leaving for COPY_SOURCE holds
+      exactly the HUD (toolbar, bottom bar) on transparent black; another is the G-buffer albedo.
+    - Trace of those UI textures (run 25): two textures in turn; each frame the UI is drawn into one (bound twice,
+      through sRGB and UNORM views) while the other, last frame's, is cleared.
+    - New default UIDetect = texture: a frame-sized 8-bit target leaving RENDER_TARGET for COPY_SOURCE is learned as a
+      UI texture; its bindings draw into the mod's own (typeless RGBA8, UNORM + sRGB views), and the game's own is
+      cleared at that binding so the compositing pass finds no UI. The HUD panel now has its own swapchain in the UI
+      texture's format (RGBA8 sRGB, 8-bit alpha) instead of the eyes' 10-bit format (2-bit alpha, and copying
+      RGBA8 into it would have been invalid).
+    - Run 26 (re/work/run26_pair.png): the eye image has no UI, the HUD texture has the whole UI; "in-world HUD
+      active"; no warnings or errors in the log. Not seen: the panel in a worn headset (session never got past
+      synchronized), and laser clicks on it.
+    - Also in this version (code only, not yet reached in a run): the rig kind follows the UI mode the player enters
+      (drive -> first-person vehicle, gunner -> at the gun mount with the body's orientation, photo, guest cam,
+      cinematic), because the camera component's mode name is not reachable from the park's Lua state; a run of
+      camera ticks reading back only the mod's own writes is counted (run 14 checks: 301 ticks, 0 own reads).
+
 2026-10-27  0.0.4  VR camera drives the rendered frame in a JWE3 park (remote test, headset on the desk, not worn)
     - Found why the camera never ticked: a park shares the startup Lua state (startup globals visible from the
       park), so every hook is in force, but the camera component (CameraModeManager and its mode modules) runs in

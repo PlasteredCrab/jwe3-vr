@@ -26,10 +26,33 @@ using EndEventFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*);
 using BarrierFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, const D3D12_RESOURCE_BARRIER*);
 using CreateRtvFn = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, const D3D12_RENDER_TARGET_VIEW_DESC*,
                                              D3D12_CPU_DESCRIPTOR_HANDLE);
+using ClearRtvFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, const FLOAT*, UINT, const D3D12_RECT*);
 static SetRtFn o_SetRenderTargets;
+static ClearRtvFn o_ClearRtv;
 static EndEventFn o_EndEvent;
 static BarrierFn o_Barrier;
 static CreateRtvFn o_CreateRtv;
+// Diagnostics: other ways a frame can write the backbuffer (newer D3D12 paths the redirect does not cover).
+using BeginRenderPassFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList4*, UINT, const D3D12_RENDER_PASS_RENDER_TARGET_DESC*,
+                                                   const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC*, D3D12_RENDER_PASS_FLAGS);
+using Barrier7Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList7*, UINT32, const D3D12_BARRIER_GROUP*);
+using CopyRegionFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, const D3D12_TEXTURE_COPY_LOCATION*, UINT, UINT, UINT,
+                                              const D3D12_TEXTURE_COPY_LOCATION*, const D3D12_BOX*);
+using CopyResourceFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, ID3D12Resource*);
+static BeginRenderPassFn o_BeginRenderPass;
+static Barrier7Fn o_Barrier7;
+static CopyRegionFn o_CopyRegion;
+static CopyResourceFn o_CopyResource;
+static std::atomic<ID3D12Resource*> g_bbCache[4]{};
+static std::atomic<unsigned> g_statRenderPass{0}, g_statBarrier7{0}, g_statBarrier7Bb{0}, g_statCopyToBb{0}, g_statLegacyBbBarrier{0},
+    g_statSetRt{0};
+
+static bool IsCachedBackbuffer(ID3D12Resource* r) {
+    if (!r) return false;
+    for (auto& b : g_bbCache)
+        if (b.load() == r) return true;
+    return false;
+}
 using CreateSwapForHwndFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*, IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*,
                                                         const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**);
 using CreateSwapFn = HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory*, IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**);
@@ -297,10 +320,84 @@ static void WriteBmp(const std::wstring& path, UINT w, UINT h, const std::vector
     CloseHandle(f);
 }
 
-static void DebugScreenshot() {
-    ID3D12Resource* bb = NextBackbuffer();
-    if (!bb) return;
-    D3D12_RESOURCE_DESC d = bb->GetDesc();
+static float HalfToFloat(uint16_t h) {
+    uint32_t sign = (uint32_t)(h >> 15) << 31, exp = (h >> 10) & 0x1F, man = h & 0x3FF;
+    uint32_t bits;
+    if (exp == 0) bits = sign; // zero / denormal (shown as black)
+    else if (exp == 31) bits = sign | 0x7F800000 | (man << 13);
+    else bits = sign | ((exp + 112) << 23) | (man << 13);
+    float f;
+    memcpy(&f, &bits, 4);
+    return f;
+}
+
+static uint8_t Unit8(float v) { return (uint8_t)(v <= 0.f ? 0 : v >= 1.f ? 255 : v * 255.f + 0.5f); }
+
+// One texel of the formats the debug BMPs understand (false: not supported).
+static bool DecodeTexel(DXGI_FORMAT f, const uint8_t* px, uint8_t& r, uint8_t& g, uint8_t& b) {
+    uint32_t v;
+    memcpy(&v, px, 4);
+    switch (f) {
+    case DXGI_FORMAT_R10G10B10A2_UNORM:
+        r = (uint8_t)((v & 0x3FF) >> 2), g = (uint8_t)(((v >> 10) & 0x3FF) >> 2), b = (uint8_t)(((v >> 20) & 0x3FF) >> 2);
+        return true;
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        r = (uint8_t)v, g = (uint8_t)(v >> 8), b = (uint8_t)(v >> 16);
+        return true;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        b = (uint8_t)v, g = (uint8_t)(v >> 8), r = (uint8_t)(v >> 16);
+        return true;
+    case DXGI_FORMAT_R16G16B16A16_FLOAT: {
+        uint16_t h[3];
+        memcpy(h, px, 6);
+        r = Unit8(HalfToFloat(h[0])), g = Unit8(HalfToFloat(h[1])), b = Unit8(HalfToFloat(h[2]));
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+static UINT TexelBytes(DXGI_FORMAT f) { return f == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4; }
+
+bool DebugFormatSupported(DXGI_FORMAT f) {
+    uint8_t px[8]{}, r, g, b;
+    return DecodeTexel(f, px, r, g, b);
+}
+
+bool SaveReadbackBmp(ID3D12Resource* rb, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& fp, DXGI_FORMAT format, UINT w, UINT h,
+                     const wchar_t* file) {
+    uint8_t* p = nullptr;
+    D3D12_RANGE range{0, (SIZE_T)(fp.Offset + (UINT64)fp.Footprint.RowPitch * h)};
+    if (FAILED(rb->Map(0, &range, (void**)&p)) || !p) return false;
+    std::vector<uint8_t> bgr((size_t)w * h * 3);
+    UINT step = TexelBytes(format);
+    bool ok = DebugFormatSupported(format);
+    for (UINT y = 0; y < h && ok; ++y) {
+        const uint8_t* row = p + fp.Offset + (size_t)y * fp.Footprint.RowPitch;
+        uint8_t* out = &bgr[(size_t)y * w * 3];
+        for (UINT x = 0; x < w; ++x) {
+            uint8_t r, g, b;
+            DecodeTexel(format, row + (size_t)x * step, r, g, b);
+            out[x * 3 + 0] = b, out[x * 3 + 1] = g, out[x * 3 + 2] = r;
+        }
+    }
+    D3D12_RANGE none{0, 0};
+    rb->Unmap(0, &none);
+    if (ok) WriteBmp(ModuleDir() + file, w, h, bgr);
+    return ok;
+}
+
+// Copies one texture (in state `state`) to the CPU and writes it as <file> next to the DLL. inFlight = the GPU
+// had not finished the copy: the caller must then keep `res` alive (it is not released here either way).
+static bool DebugDump(ID3D12Resource* res, D3D12_RESOURCE_STATES state, const wchar_t* file, bool& inFlight) {
+    inFlight = false;
+    if (!res) return false;
+    D3D12_RESOURCE_DESC d = res->GetDesc();
     D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
     UINT rows = 0;
     UINT64 rowSize = 0, total = 0;
@@ -317,66 +414,60 @@ static void DebugScreenshot() {
     ID3D12Resource* rb = nullptr;
     if (FAILED(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
                                                  IID_PPV_ARGS(&rb)))) {
-        bb->Release();
-        LOGW("debug: screenshot readback buffer failed");
-        return;
+        LOGW("debug: readback buffer failed");
+        return false;
     }
     bool submitted = Submit([&](ID3D12GraphicsCommandList* l) {
-        D3D12_RESOURCE_BARRIER b = Transition(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        D3D12_RESOURCE_BARRIER b = Transition(res, state, D3D12_RESOURCE_STATE_COPY_SOURCE);
         l->ResourceBarrier(1, &b);
         D3D12_TEXTURE_COPY_LOCATION dst{rb, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
         dst.PlacedFootprint = fp;
-        D3D12_TEXTURE_COPY_LOCATION src{bb, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+        D3D12_TEXTURE_COPY_LOCATION src{res, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
         l->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
-        b = Transition(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT);
+        b = Transition(res, D3D12_RESOURCE_STATE_COPY_SOURCE, state);
         l->ResourceBarrier(1, &b);
     });
     if (!submitted || !WaitCopies()) {
         // Not copied, or the GPU has not finished: keep both alive (leak) rather than free memory in use.
-        LOGW("debug: screenshot skipped (copy queue busy)");
-        return;
+        LOGW("debug: dump skipped (copy queue busy)");
+        inFlight = submitted;
+        return false;
     }
-    uint8_t* p = nullptr;
-    D3D12_RANGE range{0, (SIZE_T)total};
-    UINT w = (UINT)d.Width, h = d.Height;
-    bool ok = false;
-    if (SUCCEEDED(rb->Map(0, &range, (void**)&p)) && p) {
-        std::vector<uint8_t> bgr((size_t)w * h * 3);
-        ok = true;
-        for (UINT y = 0; y < h && ok; ++y) {
-            const uint8_t* row = p + fp.Offset + (size_t)y * fp.Footprint.RowPitch;
-            uint8_t* out = &bgr[(size_t)y * w * 3];
-            for (UINT x = 0; x < w; ++x) {
-                uint32_t v = ((const uint32_t*)row)[x];
-                uint8_t r, g, b;
-                switch (d.Format) {
-                case DXGI_FORMAT_R10G10B10A2_UNORM:
-                    r = (uint8_t)((v & 0x3FF) >> 2), g = (uint8_t)(((v >> 10) & 0x3FF) >> 2), b = (uint8_t)(((v >> 20) & 0x3FF) >> 2);
-                    break;
-                case DXGI_FORMAT_R8G8B8A8_UNORM:
-                case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-                    r = (uint8_t)v, g = (uint8_t)(v >> 8), b = (uint8_t)(v >> 16);
-                    break;
-                case DXGI_FORMAT_B8G8R8A8_UNORM:
-                case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-                    b = (uint8_t)v, g = (uint8_t)(v >> 8), r = (uint8_t)(v >> 16);
-                    break;
-                default:
-                    ok = false;
-                    r = g = b = 0;
-                    break;
-                }
-                out[x * 3 + 0] = b, out[x * 3 + 1] = g, out[x * 3 + 2] = r;
-            }
-        }
-        D3D12_RANGE none{0, 0};
-        rb->Unmap(0, &none);
-        if (ok) WriteBmp(ModuleDir() + L"JWE3VR_shot.bmp", w, h, bgr);
-    }
+    bool ok = SaveReadbackBmp(rb, fp, d.Format, (UINT)d.Width, d.Height, file);
     rb->Release();
-    bb->Release();
-    if (ok) LOGI("debug: screenshot %ux%u saved to JWE3VR_shot.bmp; %s", w, h, input::DebugSummary().c_str());
-    else LOGW("debug: screenshot failed (backbuffer format %d)", (int)d.Format);
+    if (ok) LOGI("debug: %ls %ux%u saved; %s", file, (UINT)d.Width, d.Height, input::DebugSummary().c_str());
+    else LOGW("debug: %ls failed (format %d)", file, (int)d.Format);
+    return ok;
+}
+
+static void DebugScreenshot() {
+    ID3D12Resource* bb = NextBackbuffer();
+    if (!bb) return;
+    bool inFlight = false;
+    DebugDump(bb, D3D12_RESOURCE_STATE_PRESENT, L"JWE3VR_shot.bmp", inFlight);
+    if (!inFlight) bb->Release();
+}
+
+// Every 10 s: game frames per second, the OpenXR session state and the time Present spent in xrWaitFrame.
+static void LogFrameStats(ULONGLONG waitMs) {
+    static ULONGLONG windowStart = 0, waitTotal = 0;
+    static unsigned frames = 0;
+    ULONGLONG now = GetTickCount64();
+    if (!windowStart) windowStart = now;
+    ++frames;
+    waitTotal += waitMs;
+    if (now - windowStart >= 10000) {
+        LOGI("frames: %.1f fps, OpenXR state %d, xrWaitFrame %.1f ms per frame", frames * 1000.0 / (now - windowStart),
+             xr::SessionState(), frames ? (double)waitTotal / frames : 0.0);
+        double n = frames ? (double)frames : 1.0;
+        LOGI("per frame: OMSetRenderTargets %.1f, BeginRenderPass %.1f, legacy barriers on backbuffer %.1f, enhanced barriers %.1f "
+             "(on backbuffer %.1f), copies into backbuffer %.1f",
+             g_statSetRt.exchange(0) / n, g_statRenderPass.exchange(0) / n, g_statLegacyBbBarrier.exchange(0) / n,
+             g_statBarrier7.exchange(0) / n, g_statBarrier7Bb.exchange(0) / n, g_statCopyToBb.exchange(0) / n);
+        windowStart = now;
+        frames = 0;
+        waitTotal = 0;
+    }
 }
 
 static void OnPresent(IDXGISwapChain* sc) {
@@ -405,6 +496,22 @@ static void OnPresent(IDXGISwapChain* sc) {
         if (GetFileAttributesW(req.c_str()) != INVALID_FILE_ATTRIBUTES) {
             DeleteFileW(req.c_str());
             DebugScreenshot();
+        }
+        // JWE3VR_hud.req: the in-world HUD texture (the UI the game drew this frame, on transparent black).
+        std::wstring hudReq = ModuleDir() + L"JWE3VR_hud.req";
+        if (GetFileAttributesW(hudReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileW(hudReq.c_str());
+            bool inFlight = false;
+            if (ID3D12Resource* hud = passes::PeekHudTexture())
+                DebugDump(hud, D3D12_RESOURCE_STATE_RENDER_TARGET, L"JWE3VR_hud.bmp", inFlight);
+            else
+                LOGW("debug: no HUD texture (WorldHud off or not immersive)");
+        }
+        // JWE3VR_rt.req: log the render targets of a frame and save each large one (finding the UI target).
+        std::wstring rtReq = ModuleDir() + L"JWE3VR_rt.req";
+        if (GetFileAttributesW(rtReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            DeleteFileW(rtReq.c_str());
+            passes::RequestCensus();
         }
     }
     if (xr::NeedsReinit()) {
@@ -451,10 +558,18 @@ static void OnPresent(IDXGISwapChain* sc) {
             ID3D12Resource* b = nullptr;
             if (SUCCEEDED(g_swap->GetBuffer(i, IID_PPV_ARGS(&b)))) {
                 fi.backbuffers[i] = b; // the swapchain keeps them alive
+                g_bbCache[i] = b;
                 b->Release();
             }
         }
     passes::OnPresent(fi);
+    // The HUD panel's swapchain follows the UI texture (size and format); no redirect until it exists.
+    bool hudReady = false;
+    if (ID3D12Resource* ui = passes::PeekHudTexture(); ui && haveSwaps) {
+        D3D12_RESOURCE_DESC ud = ui->GetDesc();
+        hudReady = xr::EnsureHudSwapchain((UINT)ud.Width, ud.Height, passes::HudViewFormat());
+    }
+    passes::SetHudOutputReady(hudReady);
 
     if (immersive) {
         vm::Fov fov = vm::SymmetricFov(req.fovY, aspect);
@@ -505,7 +620,9 @@ static void OnPresent(IDXGISwapChain* sc) {
     xr::EndFrame(g_views, layers);
     input::OnFrame(screen, layers.hud);
     viewcb::OnPresent();
+    ULONGLONG waitStart = GetTickCount64();
     xr::BeginFrame();
+    LogFrameStats(GetTickCount64() - waitStart);
     bb->Release();
 }
 
@@ -557,11 +674,18 @@ static HRESULT STDMETHODCALLTYPE Hk_Reset(ID3D12GraphicsCommandList* l, ID3D12Co
 static void STDMETHODCALLTYPE Hk_SetRenderTargets(ID3D12GraphicsCommandList* l, UINT n, const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs,
                                                   BOOL single, const D3D12_CPU_DESCRIPTOR_HANDLE* dsv) {
     D3D12_CPU_DESCRIPTOR_HANDLE swapped[8];
+    if (l != g_copyList) ++g_statSetRt;
     if (l != g_copyList && passes::OnSetRenderTargets(l, n, rtvs, single, swapped)) {
         o_SetRenderTargets(l, n, swapped, FALSE, dsv);
         return;
     }
     o_SetRenderTargets(l, n, rtvs, single, dsv);
+}
+
+static void STDMETHODCALLTYPE Hk_ClearRtv(ID3D12GraphicsCommandList* l, D3D12_CPU_DESCRIPTOR_HANDLE h, const FLOAT* color, UINT n,
+                                          const D3D12_RECT* rects) {
+    if (l != g_copyList) passes::OnClearRtv(l, h);
+    o_ClearRtv(l, h, color, n, rects);
 }
 
 static void STDMETHODCALLTYPE Hk_EndEvent(ID3D12GraphicsCommandList* l) {
@@ -570,8 +694,50 @@ static void STDMETHODCALLTYPE Hk_EndEvent(ID3D12GraphicsCommandList* l) {
 }
 
 static void STDMETHODCALLTYPE Hk_Barrier(ID3D12GraphicsCommandList* l, UINT n, const D3D12_RESOURCE_BARRIER* b) {
-    if (l != g_copyList) passes::OnBarrier(l, n, b);
+    if (l != g_copyList) {
+        passes::OnBarrier(l, n, b);
+        for (UINT i = 0; b && i < n; ++i)
+            if (b[i].Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && IsCachedBackbuffer(b[i].Transition.pResource)) {
+                ++g_statLegacyBbBarrier;
+                break;
+            }
+    }
     o_Barrier(l, n, b);
+}
+
+static void STDMETHODCALLTYPE Hk_BeginRenderPass(ID3D12GraphicsCommandList4* l, UINT n, const D3D12_RENDER_PASS_RENDER_TARGET_DESC* rts,
+                                                 const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC* ds, D3D12_RENDER_PASS_FLAGS flags) {
+    if ((void*)l != (void*)g_copyList) ++g_statRenderPass;
+    o_BeginRenderPass(l, n, rts, ds, flags);
+}
+
+static void STDMETHODCALLTYPE Hk_Barrier7(ID3D12GraphicsCommandList7* l, UINT32 n, const D3D12_BARRIER_GROUP* groups) {
+    if ((void*)l != (void*)g_copyList && groups) {
+        ++g_statBarrier7;
+        for (UINT32 g = 0; g < n; ++g) {
+            if (groups[g].Type != D3D12_BARRIER_TYPE_TEXTURE) continue;
+            for (UINT32 i = 0; i < groups[g].NumBarriers; ++i)
+                if (IsCachedBackbuffer(groups[g].pTextureBarriers[i].pResource)) ++g_statBarrier7Bb;
+        }
+    }
+    o_Barrier7(l, n, groups);
+}
+
+static void STDMETHODCALLTYPE Hk_CopyRegion(ID3D12GraphicsCommandList* l, const D3D12_TEXTURE_COPY_LOCATION* dst, UINT x, UINT y, UINT z,
+                                            const D3D12_TEXTURE_COPY_LOCATION* src, const D3D12_BOX* box) {
+    if (l != g_copyList && dst && IsCachedBackbuffer(dst->pResource)) {
+        ++g_statCopyToBb;
+        if (src) passes::OnCopyToBackbuffer(src->pResource);
+    }
+    o_CopyRegion(l, dst, x, y, z, src, box);
+}
+
+static void STDMETHODCALLTYPE Hk_CopyResource(ID3D12GraphicsCommandList* l, ID3D12Resource* dst, ID3D12Resource* src) {
+    if (l != g_copyList && IsCachedBackbuffer(dst)) {
+        ++g_statCopyToBb;
+        passes::OnCopyToBackbuffer(src);
+    }
+    o_CopyResource(l, dst, src);
 }
 
 static void STDMETHODCALLTYPE Hk_CreateRtv(ID3D12Device* dev, ID3D12Resource* r, const D3D12_RENDER_TARGET_VIEW_DESC* d,
@@ -697,7 +863,25 @@ bool InstallHooks() {
         hooks::Create("ID3D12GraphicsCommandList::OMSetRenderTargets", hooks::VtableEntry(list, 46), (void*)Hk_SetRenderTargets,
                       (void**)&o_SetRenderTargets);
         hooks::Create("ID3D12GraphicsCommandList::EndEvent", hooks::VtableEntry(list, 58), (void*)Hk_EndEvent, (void**)&o_EndEvent);
+        hooks::Create("ID3D12GraphicsCommandList::ClearRenderTargetView", hooks::VtableEntry(list, 48), (void*)Hk_ClearRtv,
+                      (void**)&o_ClearRtv);
         hooks::Create("ID3D12Device::CreateRenderTargetView", hooks::VtableEntry(dev, 20), (void*)Hk_CreateRtv, (void**)&o_CreateRtv);
+        // Diagnostics (counted only; see LogFrameStats).
+        hooks::Create("ID3D12GraphicsCommandList::CopyTextureRegion", hooks::VtableEntry(list, 16), (void*)Hk_CopyRegion,
+                      (void**)&o_CopyRegion);
+        hooks::Create("ID3D12GraphicsCommandList::CopyResource", hooks::VtableEntry(list, 17), (void*)Hk_CopyResource,
+                      (void**)&o_CopyResource);
+        ID3D12GraphicsCommandList4* l4 = nullptr;
+        if (SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&l4)))) {
+            hooks::Create("ID3D12GraphicsCommandList4::BeginRenderPass", hooks::VtableEntry(l4, 68), (void*)Hk_BeginRenderPass,
+                          (void**)&o_BeginRenderPass);
+            l4->Release();
+        }
+        ID3D12GraphicsCommandList7* l7 = nullptr;
+        if (SUCCEEDED(list->QueryInterface(IID_PPV_ARGS(&l7)))) {
+            hooks::Create("ID3D12GraphicsCommandList7::Barrier", hooks::VtableEntry(l7, 80), (void*)Hk_Barrier7, (void**)&o_Barrier7);
+            l7->Release();
+        }
     }
     SafeRelease(factory);
     SafeRelease(buffer);

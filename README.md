@@ -9,9 +9,10 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
 > **Status: first runs in JWE3 (game 1.5.5, build 1792088119), headset not worn.** Seen working in the game: the
 > mod loads without a proxy DLL, the Lua bridge and hooks run, OpenXR starts on SteamVR, and in a Sandbox park the
-> VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on). Not yet seen: head motion
-> and stereo depth in a worn headset, controllers, the camera mode per game mode (walking/vehicles), the in-world
-> HUD and per-eye TAA (retail JWE3 has no render-pass markers). Features below describe what the code does; see
+> VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on), and the game's UI is moved
+> out of the eye images into the in-world HUD panel's texture. Not yet seen: head motion and stereo depth in a worn
+> headset, the HUD panel itself in the headset, controllers, the camera mode per game mode (walking/vehicles), and
+> per-eye TAA (retail JWE3 has no render-pass markers). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
 
 ## Features
@@ -26,8 +27,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
   scale and rotate.
 - Menus, loading screens and cutscenes on a large flat screen in front of you.
 - In-world HUD: the game's UI is drawn as a floating panel below eye level that follows you lazily, instead of
-  being painted flat onto both eyes. You point at it to click. (Falls back to the tablet if the game's UI pass
-  can't be captured.)
+  being painted flat onto both eyes. You point at it to click. The mod finds the textures JWE3 draws its UI into
+  by itself (no render-pass markers needed). (Falls back to the tablet if the UI can't be captured.)
 - Camera shake removed; shakes and shots become controller haptics instead.
 
 **Performance**
@@ -121,7 +122,7 @@ Nothing below has been confirmed at runtime.
 | Staff orders | `SelectVehicleDestination` with `{Vehicle, OrderPriority}` unchanged; `FindAvailableRangerCar` / `FindAvailableACUHelicopter` removed | New `jwe3vr.vehicles.lua` finds the nearest ranger car / ACU helicopter from the AI director's own tables |
 | On-foot tools | `Tranquillise`, `IsDiseased`, `RemoveDisease`, `GetApproxNumDartsToCure` / `ToTreat` present; no `...ToTranquillise` | None (falls back to 3 darts) |
 | Cursor ray | `Helpers.RaycastUtils` still calls `api.input.GetMouseRay` | None |
-| UI renderer | Coherent Gameface (`cohtml`, Renoir) alongside Scaleform strings; a `WorldGUIPass` exists | `UIMarkers` default now `Gameface,Renoir,Scaleform,UIRender,HUD` (unverified until a `MarkerDump` run) |
+| UI renderer | Coherent Gameface (`cohtml`, Renoir). The UI goes into two 1920x1080 RGBA8 textures used in turn (drawn through sRGB and UNORM views, cleared the frame after), copied out of RENDER_TARGET and composited by a compute pass into a 10-bit image that is copied into the backbuffer (which is never a render target) | New `UIDetect = texture` (default): learns those textures from their RENDER_TARGET -> COPY_SOURCE transition and redirects their bindings; the HUD panel gets its own RGBA8 sRGB swapchain |
 | Render passes | 60 named nodes; TAA, shadow, environment capture, skinning and height-variance passes match the marker defaults | None |
 | New JWE3 gameplay | Player-controllable aviary drones (with drone gun cameras), drone tranquillise tasks, monorail, underwater lagoon placement | Not covered yet (Phases 5 and 7) |
 
@@ -185,6 +186,7 @@ The file is written with comments on first run. The ones you are most likely to 
 | `Rig.Seated`, `Rig.SnapTurnDeg` | Seated play; snap-turn angle (0 = smooth) |
 | `Input.LeftHanded`, `Input.GunnerAimGain` | Handedness; how hard the gun chases your hand |
 | `UI.WorldHud`, `UI.HudDistance`, `UI.HudWidth` | In-world HUD panel on/off, distance and size |
+| `UI.UIDetect` | How the UI is found: `texture` (default, JWE3), `backbuffer`, `markers` |
 | `Performance.Foveation` | 0 off, 1 scene passes (default), 2 all frame-sized passes |
 | `Performance.FoveaInnerDeg` / `MidDeg` / `OuterDeg` | Where shading drops to half, quarter and 4x4 |
 | `Performance.PerEyeTAA` | Separate TAA history per eye (alternate-eye mode) |
@@ -201,9 +203,12 @@ The file is written with comments on first run. The ones you are most likely to 
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), `FOCUS`, keys and pad buttons (format in `input.cpp`). The game reads
   no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).
-  `re/remote/to_continue.sh` drives a full run into the last Sandbox save.
-- **HUD stays flat in both eyes / no panel:** look for "in-world HUD active" in the log. If it never appears, turn on
-  `MarkerDump`, find the UI pass name in the log and add it to `UIMarkers`; until then the tablet shows the HUD.
+  `re/remote/to_continue.sh` drives a full run into the last Sandbox save. `JWE3VR_hud.req` saves the HUD texture
+  (`JWE3VR_hud.bmp`; `re/remote/hudcheck.sh` puts it next to the frame), and `JWE3VR_rt.req` logs every render
+  target of one frame and saves the large ones as `JWE3VR_rt<n>.bmp` (finding where something is drawn).
+- **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
+  panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`
+  to see which render target holds the UI; until then the tablet shows the HUD.
 - **Blurry edges:** lower foveation (`FoveaInnerDeg` up, or `Foveation = 0`). "foveation: VRS tier 2" in the log
   confirms your GPU supports it.
 - **Smearing in alternate-eye mode:** look for "per-eye TAA: TAA output ... found"; if missing, tune `TAAMarkers`

@@ -97,6 +97,16 @@ Hooks.tPatches = {
     ["Editors.Vehicle.VehicleGunnerUIMode"] = function(tModule)
         global.require("JWE3VR.Gameplay").PatchGunnerMode(tModule)
     end,
+    -- UI modes that pick the rig kind on JWE3 (the camera component itself is out of reach).
+    ["Editors.Vehicle.VehiclePhotoUIMode"] = function(tModule)
+        global.require("JWE3VR.Gameplay").PatchUIMode(tModule, "photo")
+    end,
+    ["Editors.GuestCam.GuestCamUIMode"] = function(tModule)
+        global.require("JWE3VR.Gameplay").PatchUIMode(tModule, "guest")
+    end,
+    ["Editors.CinematicCamera.CinematicCameraUIMode"] = function(tModule)
+        global.require("JWE3VR.Gameplay").PatchUIMode(tModule, "cinematic")
+    end,
 }
 
 -- Camera mode modules (CameraModeManager tModeAPIs, JWE3 build 1792088119): the mode Advance is looked up

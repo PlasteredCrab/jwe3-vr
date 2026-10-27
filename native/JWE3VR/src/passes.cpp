@@ -25,6 +25,8 @@ struct ListState {
     bool vrsBound = false;
     bool checked5 = false;
     ID3D12GraphicsCommandList5* l5 = nullptr; // not AddRef'd: valid while the list lives
+    ID3D12Resource* bbToRt = nullptr;         // a backbuffer this list transitioned to RENDER_TARGET
+    ID3D12Resource* uiToRt = nullptr;         // the game's UI texture, made a render target by this list
 };
 
 static SRWLOCK g_rtvLock = SRWLOCK_INIT;
@@ -53,13 +55,25 @@ static bool g_sriFresh = false;
 // In-world HUD
 static ID3D12Resource* g_ui = nullptr;
 static ID3D12DescriptorHeap* g_uiHeap = nullptr;
-static D3D12_CPU_DESCRIPTOR_HANDLE g_uiRtv{};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_uiRtv{}, g_uiRtvSrgb{}; // UNORM (or the one typed format) and sRGB views
 static UINT g_uiW = 0, g_uiH = 0;
-static DXGI_FORMAT g_uiFormat = DXGI_FORMAT_UNKNOWN;
-static std::atomic<DXGI_FORMAT> g_uiWantFormat{DXGI_FORMAT_UNKNOWN}; // the backbuffer RTV's view format
+static DXGI_FORMAT g_uiFormat = DXGI_FORMAT_UNKNOWN; // resource format (typeless for 8-bit colour)
+static std::atomic<DXGI_FORMAT> g_uiWantFormat{DXGI_FORMAT_UNKNOWN}; // the view format the game's UI draws through
+static std::atomic<UINT> g_uiWantW{0}, g_uiWantH{0};                 // the game's UI texture size (0: the frame's)
 static std::atomic<bool> g_uiUsedThisFrame{false};
 static std::atomic<uint64_t> g_uiLastFrame{0};
 static UINT g_rtvIncrement = 0;
+static std::atomic<unsigned> g_bbBindsThisFrame{0}; // render-target bindings of the backbuffer this frame
+static unsigned g_bbBindsTotal = 0, g_bbFrames = 0;
+// UIDetect = texture: the textures the game draws its UI into (learned), and the redirect's state.
+constexpr int kUiTargets = 4;
+static std::atomic<ID3D12Resource*> g_uiTargets[kUiTargets]{};
+static std::atomic<unsigned> g_uiTargetNext{0};
+static std::mutex g_uiTraceLock;
+static std::string g_uiTrace;
+static std::atomic<int> g_uiTraceFrames{0};
+static std::atomic<bool> g_hudOutputReady{false}; // the panel swapchain can take our UI texture (set at Present)
+static std::atomic<bool> g_uiRedirecting{false};  // the last binding of a UI texture was redirected (for the log)
 
 // Per-eye TAA: a few stashes per eye, one per texture shape seen.
 struct Stash {
@@ -134,6 +148,7 @@ void OnReset(ID3D12GraphicsCommandList* list) {
     s.uiDepth = s.taaDepth = -1;
     s.taaOutput = nullptr;
     s.vrsBound = false;
+    s.bbToRt = s.uiToRt = nullptr;
     ReleaseSRWLockExclusive(&g_listLock);
 }
 
@@ -270,45 +285,100 @@ static void ApplyVrs(ID3D12GraphicsCommandList* list, ListState& s, const RtvInf
 
 // ---------------------------------------------------------------- in-world HUD
 
+static void ClearUi();
+
+// 8-bit colour formats come as a typeless group with UNORM and sRGB views; JWE3 draws its UI through both.
+static DXGI_FORMAT TypelessOf(DXGI_FORMAT f) {
+    switch (f) {
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+    case DXGI_FORMAT_R8G8B8A8_UNORM:
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+        return DXGI_FORMAT_R8G8B8A8_TYPELESS;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+    case DXGI_FORMAT_B8G8R8A8_UNORM:
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        return DXGI_FORMAT_B8G8R8A8_TYPELESS;
+    default:
+        return f; // other formats: one view format, the resource's own
+    }
+}
+
+static bool IsColor8(DXGI_FORMAT f) { return TypelessOf(f) != f || f == DXGI_FORMAT_R8G8B8A8_TYPELESS || f == DXGI_FORMAT_B8G8R8A8_TYPELESS; }
+
+static bool IsSrgb(DXGI_FORMAT f) { return f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB; }
+
+static DXGI_FORMAT UnormOf(DXGI_FORMAT f) {
+    switch (TypelessOf(f)) {
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM;
+    default: return f;
+    }
+}
+
+static DXGI_FORMAT SrgbOf(DXGI_FORMAT f) {
+    switch (TypelessOf(f)) {
+    case DXGI_FORMAT_R8G8B8A8_TYPELESS: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case DXGI_FORMAT_B8G8R8A8_TYPELESS: return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    default: return f;
+    }
+}
+
 static void EnsureUiTexture(const FrameInfo& f) {
     if (!config::Get().worldHud || !f.width) return;
     DXGI_FORMAT want = g_uiWantFormat.load();
     if (want == DXGI_FORMAT_UNKNOWN) want = f.format;
-    if (g_ui && g_uiW == f.width && g_uiH == f.height && g_uiFormat == want) return;
+    want = TypelessOf(want);
+    UINT w = g_uiWantW.load() ? g_uiWantW.load() : f.width, h = g_uiWantH.load() ? g_uiWantH.load() : f.height;
+    if (g_ui && g_uiW == w && g_uiH == h && g_uiFormat == want) return;
     ID3D12Device* dev = render::Device();
     if (!dev) return;
     if (!g_uiHeap) {
-        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1};
+        D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2};
         if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&g_uiHeap)))) return;
-        g_uiRtv = g_uiHeap->GetCPUDescriptorHandleForHeapStart();
         g_rtvIncrement = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        g_uiRtv = g_uiHeap->GetCPUDescriptorHandleForHeapStart();
+        g_uiRtvSrgb = D3D12_CPU_DESCRIPTOR_HANDLE{g_uiRtv.ptr + g_rtvIncrement};
     }
     D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
     D3D12_RESOURCE_DESC rd{};
     rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    rd.Width = f.width;
-    rd.Height = f.height;
+    rd.Width = w;
+    rd.Height = h;
     rd.DepthOrArraySize = 1;
     rd.MipLevels = 1;
-    rd.Format = want; // same format as the view the UI pipeline draws through
+    rd.Format = want; // the game's group: its UI pipelines draw through views of these formats
     rd.SampleDesc.Count = 1;
     rd.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-    D3D12_CLEAR_VALUE cv{want, {0, 0, 0, 0}};
+    D3D12_CLEAR_VALUE cv{UnormOf(want), {0, 0, 0, 0}};
     ID3D12Resource* tex = nullptr;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&tex)))) {
         LOGE("in-world HUD: UI texture creation failed (format %d)", (int)want);
         return;
     }
     // The old texture may still be referenced by lists in flight; it is kept alive (resizes are rare).
-    dev->CreateRenderTargetView(tex, nullptr, g_uiRtv);
+    D3D12_RENDER_TARGET_VIEW_DESC vd{UnormOf(want), D3D12_RTV_DIMENSION_TEXTURE2D};
+    dev->CreateRenderTargetView(tex, &vd, g_uiRtv);
+    vd.Format = SrgbOf(want);
+    dev->CreateRenderTargetView(tex, &vd, g_uiRtvSrgb);
     g_ui = tex;
-    g_uiW = f.width;
-    g_uiH = f.height;
+    g_uiW = w;
+    g_uiH = h;
     g_uiFormat = want;
-    ClearHud();
+    g_uiRedirecting = false; // a new texture starts empty: hand the UI over again
+    LOGI("in-world HUD: UI texture %ux%u format %d", w, h, (int)want);
+    ClearUi();
 }
 
-void ClearHud() {
+// Our view for a game view of format `view`, if our texture can take it (same format group).
+static bool UiViewFor(DXGI_FORMAT view, D3D12_CPU_DESCRIPTOR_HANDLE& out) {
+    if (!g_ui || TypelessOf(view) != g_uiFormat) return false;
+    out = IsSrgb(view) ? g_uiRtvSrgb : g_uiRtv;
+    return true;
+}
+
+DXGI_FORMAT HudViewFormat() { return g_ui ? SrgbOf(g_uiFormat) : DXGI_FORMAT_UNKNOWN; }
+
+static void ClearUi() {
     if (!g_ui) return;
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_uiRtv;
     render::Submit([&](ID3D12GraphicsCommandList* l) {
@@ -317,40 +387,352 @@ void ClearHud() {
     });
 }
 
-static bool IsBackbuffer(const RtvInfo& rt, const FrameInfo& f) {
+// After the panel copy: the game draws its whole UI anew every frame (JWE3 clears each UI texture the frame after
+// drawing it), so ours starts the next frame transparent.
+void ClearHud() { ClearUi(); }
+
+void SetHudOutputReady(bool ready) { g_hudOutputReady = ready; }
+
+// Backbuffer formats whose render-target view can only have the resource's own format (no sRGB twin), so a
+// learned view's format is certain (the HUD texture must match the game's pipeline exactly).
+static bool ViewFormatCertain(DXGI_FORMAT f) {
+    return f == DXGI_FORMAT_R10G10B10A2_UNORM || f == DXGI_FORMAT_R16G16B16A16_FLOAT;
+}
+
+// The texture the game copies into the backbuffer each frame (JWE3 composes scene + UI into it, then copies).
+static std::atomic<ID3D12Resource*> g_finalTex{nullptr};
+
+void OnCopyToBackbuffer(ID3D12Resource* src) {
+    if (!src) return;
+    ID3D12Resource* prev = g_finalTex.exchange(src);
+    if (prev != src) LOGI("in-world HUD: the game copies texture %p into the backbuffer", (void*)src);
+}
+
+// The backbuffer itself, or the texture the game copies into it.
+static bool IsFinalImage(ID3D12Resource* r, const FrameInfo& f) {
+    if (!r) return false;
+    if (r == g_finalTex.load()) return true;
     for (ID3D12Resource* b : f.backbuffers)
-        if (b && b == rt.resource) return true;
+        if (b && b == r) return true;
     return false;
+}
+
+static bool IsBackbuffer(const RtvInfo& rt, const FrameInfo& f) { return IsFinalImage(rt.resource, f); }
+
+static D3D12_CPU_DESCRIPTOR_HANDLE HandleAt(const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, BOOL single, UINT i) {
+    return single ? D3D12_CPU_DESCRIPTOR_HANDLE{rtvs[0].ptr + (SIZE_T)i * g_rtvIncrement} : rtvs[i];
+}
+
+// The game's UI textures (it may use more than one, e.g. one per frame in flight).
+static int UiTextureIndex(ID3D12Resource* r) {
+    if (!r) return -1;
+    for (int i = 0; i < kUiTargets; ++i)
+        if (g_uiTargets[i].load() == r) return i;
+    return -1;
+}
+
+// Debug: what the game does with its UI textures in the first frames after they are found (b = bound,
+// c = cleared, r = made a render target, x = left for COPY_SOURCE, each followed by the texture's number), one
+// log line per frame. Run 25: two textures in turn, "c0 x0 r1 r0 b1 x1 r1 b1" - the frame's UI is drawn into
+// one while the other (last frame's) is cleared.
+static void Trace(char what, int index) {
+    if (index < 0 || g_uiTraceFrames.load() >= 24) return;
+    std::lock_guard<std::mutex> l(g_uiTraceLock);
+    g_uiTrace += what;
+    g_uiTrace += (char)('0' + index);
+    g_uiTrace += ' ';
+}
+
+// JWE3 draws its UI (Gameface) into 8-bit colour textures of its own, copies them out of RENDER_TARGET and later
+// composites them into the final image in a compute pass. A frame-sized 8-bit target leaving RENDER_TARGET for
+// COPY_SOURCE is taken to be one (run 23's census found one such target per frame: the HUD on transparent black).
+static void LearnUiTarget(ID3D12Resource* r, const FrameInfo& f) {
+    if (UiTextureIndex(r) >= 0 || IsFinalImage(r, f) || !f.width) return;
+    D3D12_RESOURCE_DESC d = r->GetDesc();
+    if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.SampleDesc.Count != 1 || d.DepthOrArraySize != 1 || !IsColor8(d.Format))
+        return;
+    if (d.Width * 2 < f.width || d.Height * 2 < f.height) return;
+    unsigned slot = g_uiTargetNext.fetch_add(1) % kUiTargets;
+    g_uiTargets[slot] = r;
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 8)
+        LOGI("in-world HUD: the game draws its UI into texture %p (#%u, %llux%u, format %d); those draws go to the HUD panel",
+             (void*)r, slot, (unsigned long long)d.Width, d.Height, (int)d.Format);
+}
+
+// UIDetect = texture. A binding of a game UI texture draws into ours instead, and the game's own is cleared there
+// (it is a render target at that point), so its compositing pass finds no UI for the eyes. The game's own clears
+// are left alone: they clear last frame's texture, while this frame's UI is already being drawn into ours.
+static bool RedirectUiTexture(ID3D12GraphicsCommandList* list, UINT count, const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, BOOL single,
+                              D3D12_CPU_DESCRIPTOR_HANDLE* out, const FrameInfo& f, const Settings& c) {
+    if (!g_uiTargets[0].load()) return false;
+    int at = -1, index = -1;
+    RtvInfo rt{};
+    for (UINT i = 0; i < count && at < 0; ++i)
+        if (LookupRtv(HandleAt(rtvs, single, i), rt) && (index = UiTextureIndex(rt.resource)) >= 0) at = (int)i;
+    if (at < 0) return false;
+    Trace('b', index);
+    ID3D12Resource* target = rt.resource;
+    D3D12_RESOURCE_DESC d = target->GetDesc();
+    D3D12_CPU_DESCRIPTOR_HANDLE ours{};
+    bool want = c.worldHud && f.immersive && f.worldHudAllowed;
+    if (want && (!UiViewFor(rt.format, ours) || d.Width != g_uiW || d.Height != g_uiH)) {
+        // Ours must be in the game's format group (pipeline formats) and of its size: (re)created at the next Present.
+        g_uiWantFormat = rt.format;
+        g_uiWantW = (UINT)d.Width;
+        g_uiWantH = d.Height;
+        want = false;
+    }
+    want = want && g_hudOutputReady.load();
+
+    AcquireSRWLockShared(&g_listLock);
+    auto it = g_lists.find(list);
+    bool isRt = it != g_lists.end() && it->second.uiToRt == target; // this list made it a render target: state known
+    ReleaseSRWLockShared(&g_listLock);
+
+    if (g_uiRedirecting.exchange(want) != want)
+        LOGI("in-world HUD: %s", want ? "the UI now goes to the panel" : "the UI is back in the frame");
+    if (!want) return false;
+    if (isRt) {
+        t_ours = true;
+        const float clear[4] = {0, 0, 0, 0};
+        list->ClearRenderTargetView(HandleAt(rtvs, single, (UINT)at), clear, 0, nullptr);
+        t_ours = false;
+    } else {
+        JVR_LOG_ONCE("in-world HUD: a UI texture was bound without a known state; its old content is not cleared");
+    }
+    for (UINT i = 0; i < count; ++i) out[i] = (int)i == at ? ours : HandleAt(rtvs, single, i);
+    g_uiUsedThisFrame = true;
+    return true;
+}
+
+void OnClearRtv(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    if (t_ours || !g_uiTargets[0].load() || g_uiTraceFrames.load() >= 24) return;
+    RtvInfo rt{};
+    if (LookupRtv(h, rt)) Trace('c', UiTextureIndex(rt.resource));
+}
+
+// ---------------------------------------------------------------- render-target census (debug)
+// One frame's render-target bindings are logged (resource, formats, how often bound, the state it leaves
+// RENDER_TARGET for); in the next frame each large target is copied out inside the game's own list just before
+// it leaves RENDER_TARGET (so its state is known) and saved a few seconds later as JWE3VR_rt<n>.bmp.
+
+struct CensusTarget {
+    ID3D12Resource* r = nullptr;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN; // view format
+    unsigned binds = 0, firstBind = 0;
+    unsigned leftTo = 0, leaves = 0;    // the state it left RENDER_TARGET for, and how often
+    ID3D12Resource* readback = nullptr; // never freed: a list holding the copy may still be in flight
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{};
+};
+enum class CensusStep { Off, Requested, Listing, Capturing, Saving };
+static std::mutex g_censusLock;
+static CensusStep g_censusStep = CensusStep::Off;
+static std::vector<CensusTarget> g_census;
+static unsigned g_censusBinds = 0, g_censusUnknown = 0;
+static ULONGLONG g_censusSaveAt = 0;
+static std::atomic<bool> g_censusActive{false}; // Listing or Capturing (cheap check in the hooks)
+
+void RequestCensus() {
+    std::lock_guard<std::mutex> l(g_censusLock);
+    if (g_censusStep == CensusStep::Off) g_censusStep = CensusStep::Requested;
+}
+
+static CensusTarget* CensusFind(ID3D12Resource* r) { // caller holds g_censusLock
+    for (CensusTarget& t : g_census)
+        if (t.r == r) return &t;
+    return nullptr;
+}
+
+static void CensusBind(UINT count, const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, BOOL single) {
+    if (!rtvs || count > 8) return;
+    if (!g_rtvIncrement)
+        if (ID3D12Device* dev = render::Device()) g_rtvIncrement = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    std::lock_guard<std::mutex> l(g_censusLock);
+    if (g_censusStep != CensusStep::Listing) return;
+    for (UINT i = 0; i < count; ++i) {
+        D3D12_CPU_DESCRIPTOR_HANDLE h = single ? D3D12_CPU_DESCRIPTOR_HANDLE{rtvs[0].ptr + (SIZE_T)i * g_rtvIncrement} : rtvs[i];
+        RtvInfo rt{};
+        if (!LookupRtv(h, rt)) {
+            ++g_censusUnknown;
+            continue;
+        }
+        CensusTarget* t = CensusFind(rt.resource);
+        if (!t) {
+            g_census.push_back({rt.resource, rt.format, 0, g_censusBinds});
+            t = &g_census.back();
+        }
+        ++t->binds;
+        ++g_censusBinds;
+    }
+}
+
+// Copies subresource 0 of `t` (now RENDER_TARGET) into a new readback buffer inside the game's list.
+static void CensusCapture(ID3D12GraphicsCommandList* list, CensusTarget& t) {
+    D3D12_RESOURCE_DESC d = t.r->GetDesc();
+    FrameInfo f = Frame();
+    if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.SampleDesc.Count != 1 || !render::DebugFormatSupported(t.format)) return;
+    if (d.Width * d.Height * 4 < (UINT64)f.width * f.height) return; // under a quarter of the frame
+    ID3D12Device* dev = render::Device();
+    if (!dev || list->GetType() == D3D12_COMMAND_LIST_TYPE_COPY) return;
+    UINT rows = 0;
+    UINT64 rowSize = 0, total = 0;
+    dev->GetCopyableFootprints(&d, 0, 1, 0, &t.fp, &rows, &rowSize, &total);
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_READBACK};
+    D3D12_RESOURCE_DESC bd{};
+    bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bd.Width = total;
+    bd.Height = 1;
+    bd.DepthOrArraySize = 1;
+    bd.MipLevels = 1;
+    bd.SampleDesc.Count = 1;
+    bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                            IID_PPV_ARGS(&t.readback))))
+        return;
+    t_ours = true;
+    D3D12_RESOURCE_BARRIER b = render::Transition(t.r, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    b.Transition.Subresource = 0;
+    list->ResourceBarrier(1, &b);
+    D3D12_TEXTURE_COPY_LOCATION dst{t.readback, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT, {}};
+    dst.PlacedFootprint = t.fp;
+    D3D12_TEXTURE_COPY_LOCATION src{t.r, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {}};
+    list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    std::swap(b.Transition.StateBefore, b.Transition.StateAfter);
+    list->ResourceBarrier(1, &b);
+    t_ours = false;
+}
+
+static void CensusBarrier(ID3D12GraphicsCommandList* list, UINT count, const D3D12_RESOURCE_BARRIER* b) {
+    std::lock_guard<std::mutex> l(g_censusLock);
+    for (UINT i = 0; i < count; ++i) {
+        const D3D12_RESOURCE_BARRIER& x = b[i];
+        if (x.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || x.Flags == D3D12_RESOURCE_BARRIER_FLAG_END_ONLY) continue;
+        if (x.Transition.StateBefore != D3D12_RESOURCE_STATE_RENDER_TARGET) continue;
+        CensusTarget* t = CensusFind(x.Transition.pResource);
+        if (!t) continue;
+        if (g_censusStep == CensusStep::Listing) {
+            t->leftTo = (unsigned)x.Transition.StateAfter;
+            ++t->leaves;
+        } else if (g_censusStep == CensusStep::Capturing && !t->readback &&
+                   (x.Transition.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES || x.Transition.Subresource == 0)) {
+            CensusCapture(list, *t); // before the game's barrier: still RENDER_TARGET, drawing finished
+        }
+    }
+}
+
+// Advances the census one step per Present.
+static void CensusAtPresent() {
+    std::lock_guard<std::mutex> l(g_censusLock);
+    switch (g_censusStep) {
+    case CensusStep::Off:
+        break;
+    case CensusStep::Requested:
+        g_census.clear();
+        g_censusBinds = g_censusUnknown = 0;
+        g_censusStep = CensusStep::Listing;
+        g_censusActive = true;
+        break;
+    case CensusStep::Listing: {
+        ID3D12Resource* fin = g_finalTex.load();
+        if (fin) {
+            D3D12_RESOURCE_DESC d = fin->GetDesc();
+            LOGI("census: final image %p %llux%u format %d flags %#x", (void*)fin, (unsigned long long)d.Width, d.Height, (int)d.Format,
+                 (unsigned)d.Flags);
+        }
+        LOGI("census: %u render-target bindings in one frame (%u through views created before the mod loaded), %zu targets",
+             g_censusBinds, g_censusUnknown, g_census.size());
+        int n = 0;
+        for (const CensusTarget& t : g_census) {
+            D3D12_RESOURCE_DESC d = t.r->GetDesc();
+            LOGI("census: #%d %p %llux%u view format %d (resource %d, mips %u, flags %#x): bound %u times from binding %u, leaves "
+                 "RENDER_TARGET %u times (last for %#x)%s",
+                 n++, (void*)t.r, (unsigned long long)d.Width, d.Height, (int)t.format, (int)d.Format, (unsigned)d.MipLevels,
+                 (unsigned)d.Flags, t.binds, t.firstBind, t.leaves, t.leftTo, t.r == fin ? " <- final image" : "");
+        }
+        g_censusStep = CensusStep::Capturing;
+        break;
+    }
+    case CensusStep::Capturing:
+        g_censusActive = false;
+        g_censusStep = CensusStep::Saving;
+        g_censusSaveAt = GetTickCount64() + 3000; // the captured frame has long finished on the GPU by then
+        break;
+    case CensusStep::Saving: {
+        if (GetTickCount64() < g_censusSaveAt) break;
+        int n = 0, saved = 0;
+        for (const CensusTarget& t : g_census) {
+            int index = n++;
+            if (!t.readback) continue;
+            wchar_t file[64];
+            swprintf(file, 64, L"JWE3VR_rt%d.bmp", index);
+            D3D12_RESOURCE_DESC d = t.r->GetDesc();
+            if (render::SaveReadbackBmp(t.readback, t.fp, t.format, (UINT)d.Width, d.Height, file)) ++saved;
+        }
+        LOGI("census: saved %d render-target captures as JWE3VR_rt<n>.bmp (n = census number)", saved);
+        g_censusStep = CensusStep::Off;
+        break;
+    }
+    }
 }
 
 bool OnSetRenderTargets(ID3D12GraphicsCommandList* list, UINT count, const D3D12_CPU_DESCRIPTOR_HANDLE* rtvs, BOOL single,
                         D3D12_CPU_DESCRIPTOR_HANDLE* out) {
     const Settings& c = config::Get();
     if (!c.enabled || t_ours) return false;
+    if (g_censusActive.load()) CensusBind(count, rtvs, single);
     FrameInfo f = Frame();
-    if (!f.immersive || (c.foveation <= 0 && !c.worldHud)) return false; // nothing to do: skip the locks
+    // Before the immersive check: leaving immersive mode hands the UI back to the game's texture.
+    bool uiRedirected = c.uiDetect == UiDetect::Texture && count > 0 && count <= 8 && rtvs &&
+                        RedirectUiTexture(list, count, rtvs, single, out, f, c);
+    if (!f.immersive || (c.foveation <= 0 && !c.worldHud)) return uiRedirected; // nothing else to do: skip the locks
     RtvInfo rt0{};
     bool have0 = count > 0 && rtvs && LookupRtv(rtvs[0], rt0);
 
     AcquireSRWLockExclusive(&g_listLock);
     ListState& s = StateOf(list);
+    if (!have0 && count == 1 && rtvs && s.bbToRt) {
+        // An unknown view bound right after this list made a backbuffer a render target: that backbuffer's view.
+        D3D12_RESOURCE_DESC d = s.bbToRt->GetDesc();
+        if (ViewFormatCertain(d.Format)) {
+            rt0 = RtvInfo{s.bbToRt, d.Width, d.Height, d.Format};
+            have0 = true;
+            AcquireSRWLockExclusive(&g_rtvLock);
+            g_rtvs[rtvs[0].ptr] = rt0;
+            ReleaseSRWLockExclusive(&g_rtvLock);
+            LOGI("in-world HUD: learned a backbuffer render-target view (format %d)", (int)d.Format);
+        } else {
+            JVR_LOG_ONCE("in-world HUD: backbuffer view format uncertain (%d); not learning its views", (int)d.Format);
+        }
+    }
     bool inUi = s.uiDepth >= 0;
     ApplyVrs(list, s, have0 ? &rt0 : nullptr, f);
     ReleaseSRWLockExclusive(&g_listLock);
 
-    if (!inUi || !c.worldHud || !f.worldHudAllowed || !g_ui || count == 0 || count > 8 || !rtvs) return false;
+    if (count == 0 || count > 8 || !rtvs || c.uiDetect == UiDetect::Texture) return uiRedirected;
+    // Backbuffer bindings of this frame (counted for the log, and the UI rule when there are no markers).
+    bool bindsBackbuffer = false;
+    for (UINT i = 0; i < count && !bindsBackbuffer; ++i) {
+        RtvInfo rt{};
+        bindsBackbuffer = LookupRtv(HandleAt(rtvs, single, i), rt) && IsBackbuffer(rt, f);
+    }
+    if (!bindsBackbuffer) return false;
+    unsigned bindIndex = g_bbBindsThisFrame.fetch_add(1);
+    if (c.uiDetect == UiDetect::Backbuffer) inUi = bindIndex >= (unsigned)std::max(0, c.uiSkipBackbufferBinds);
+    if (!inUi || !c.worldHud || !f.worldHudAllowed || !g_ui || !g_hudOutputReady.load()) return false;
     bool replaced = false;
     for (UINT i = 0; i < count; ++i) {
-        D3D12_CPU_DESCRIPTOR_HANDLE h = single ? D3D12_CPU_DESCRIPTOR_HANDLE{rtvs[0].ptr + (SIZE_T)i * g_rtvIncrement} : rtvs[i];
+        D3D12_CPU_DESCRIPTOR_HANDLE h = HandleAt(rtvs, single, i);
         RtvInfo rt{};
         out[i] = h;
         if (!LookupRtv(h, rt) || !IsBackbuffer(rt, f)) continue;
-        if (rt.format != g_uiFormat) {
+        D3D12_CPU_DESCRIPTOR_HANDLE ours{};
+        if (!UiViewFor(rt.format, ours)) {
             // Draw through the same view format as the game's pipeline: recreate at the next Present.
             g_uiWantFormat = rt.format;
             return false;
         }
-        out[i] = g_uiRtv;
+        out[i] = ours;
         replaced = true;
     }
     if (!replaced) return false;
@@ -363,6 +745,8 @@ ID3D12Resource* TakeHudTexture() {
     g_uiLastFrame = g_frameIndex.load();
     return g_ui;
 }
+
+ID3D12Resource* PeekHudTexture() { return g_ui; }
 
 bool WorldHudActive() {
     uint64_t now = g_frameIndex.load(), last = g_uiLastFrame.load();
@@ -460,7 +844,38 @@ static void TaaEnd(ID3D12GraphicsCommandList* list, int eye, ID3D12Resource* out
 
 void OnBarrier(ID3D12GraphicsCommandList* list, UINT count, const D3D12_RESOURCE_BARRIER* b) {
     if (t_ours || !b) return;
+    if (g_censusActive.load()) CensusBarrier(list, count, b);
     FrameInfo f = Frame();
+    if (config::Get().uiDetect == UiDetect::Texture) {
+        for (UINT i = 0; i < count; ++i) {
+            const D3D12_RESOURCE_BARRIER& x = b[i];
+            if (x.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || !x.Transition.pResource) continue;
+            if (x.Transition.StateBefore == D3D12_RESOURCE_STATE_RENDER_TARGET && x.Transition.StateAfter == D3D12_RESOURCE_STATE_COPY_SOURCE &&
+                x.Flags != D3D12_RESOURCE_BARRIER_FLAG_END_ONLY)
+                LearnUiTarget(x.Transition.pResource, f);
+            int index = UiTextureIndex(x.Transition.pResource);
+            if (index < 0 || x.Flags == D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY) continue;
+            if (x.Transition.StateAfter == D3D12_RESOURCE_STATE_RENDER_TARGET) Trace('r', index);
+            else if (x.Transition.StateAfter == D3D12_RESOURCE_STATE_COPY_SOURCE) Trace('x', index);
+            AcquireSRWLockExclusive(&g_listLock);
+            ListState& s = StateOf(list);
+            bool whole = x.Transition.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES || x.Transition.Subresource == 0;
+            s.uiToRt = whole && x.Transition.StateAfter == D3D12_RESOURCE_STATE_RENDER_TARGET ? x.Transition.pResource : nullptr;
+            ReleaseSRWLockExclusive(&g_listLock);
+        }
+    }
+    // Remember backbuffer transitions into / out of RENDER_TARGET per list, to learn the backbuffer's
+    // render-target views when they were created before the mod loaded (no version.dll proxy).
+    for (UINT i = 0; i < count; ++i) {
+        const D3D12_RESOURCE_BARRIER& x = b[i];
+        if (x.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || !x.Transition.pResource) continue;
+        if (!IsFinalImage(x.Transition.pResource, f)) continue;
+        AcquireSRWLockExclusive(&g_listLock);
+        ListState& s = StateOf(list);
+        if (x.Transition.StateAfter & D3D12_RESOURCE_STATE_RENDER_TARGET) s.bbToRt = x.Transition.pResource;
+        else if (s.bbToRt == x.Transition.pResource) s.bbToRt = nullptr;
+        ReleaseSRWLockExclusive(&g_listLock);
+    }
     if (!TaaWanted(f)) return;
     AcquireSRWLockExclusive(&g_stateLock);
     for (UINT i = 0; i < count; ++i) {
@@ -549,8 +964,21 @@ void OnPresent(const FrameInfo& info) {
     g_frame = info;
     ReleaseSRWLockExclusive(&g_frameLock);
     g_frameIndex.fetch_add(1);
+    // Every 600 frames: how often a frame binds the backbuffer as a render target (tunes UISkipBackbufferBinds).
+    g_bbBindsTotal += g_bbBindsThisFrame.exchange(0);
+    if (info.immersive && ++g_bbFrames >= 600) {
+        LOGI("in-world HUD: %.2f render-target bindings of the final image per frame (UI = all after the first %d)",
+             g_bbBindsTotal / (double)g_bbFrames, config::Get().uiSkipBackbufferBinds);
+        g_bbFrames = g_bbBindsTotal = 0;
+    }
     if (config::Get().foveation > 0 && info.immersive) BuildShadingRateImage(info);
     EnsureUiTexture(info);
+    CensusAtPresent();
+    if (g_uiTargets[0].load() && g_uiTraceFrames.load() < 24) {
+        std::lock_guard<std::mutex> l(g_uiTraceLock);
+        LOGI("in-world HUD trace, frame %d: %s", g_uiTraceFrames.fetch_add(1), g_uiTrace.empty() ? "(nothing)" : g_uiTrace.c_str());
+        g_uiTrace.clear();
+    }
 
     // Whenever per-eye TAA (re)starts, everything learned before is stale: states, histories.
     bool wanted = TaaWanted(info);

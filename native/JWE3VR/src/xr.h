@@ -20,6 +20,7 @@ enum class SwapId { Left = 0, Right = 1, Screen = 2, Hud = 3, Dot = 4 };
 bool Init(ID3D12Device* device, ID3D12CommandQueue* queue);
 void Shutdown();
 bool Running();      // session running and the runtime wants frames
+int SessionState();  // XrSessionState (5 = focused, 4 = visible, 3 = synchronized)
 bool NeedsReinit();  // runtime exited or the session was lost: Shutdown() and Init() again later
 
 // Waits for the next frame (paces the game to the headset), begins it and publishes poses
@@ -28,6 +29,10 @@ bool BeginFrame();
 
 // Creates the eye and screen swapchains to match the game's backbuffer (no-op if they match).
 bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT backbufferFormat);
+
+// The in-world HUD panel's swapchain: the size and format of the texture the game's UI is drawn into (or its
+// sRGB/UNORM twin), so that texture can be copied in as is. False if the runtime has neither format.
+bool EnsureHudSwapchain(UINT width, UINT height, DXGI_FORMAT format);
 
 // Acquire/wait/release around a copy into a swapchain image. Image state is RENDER_TARGET.
 ID3D12Resource* AcquireImage(SwapId id);

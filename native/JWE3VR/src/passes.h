@@ -4,9 +4,10 @@
 //  * Foveated rendering: D3D12 variable rate shading (tier 2). A shading-rate image (full rate in the
 //    middle, 2x2 then 4x4 toward the edges, in angles from the eye centre) is bound whenever the game
 //    sets a frame-sized scene render target. Shadow maps, UI and post passes keep full rate.
-//  * In-world HUD: inside the UI pass (markers in UI.UIMarkers) the backbuffer render target is swapped
-//    for a transparent texture of our own, so the eyes get the scene without UI and the UI becomes a
-//    panel in the world (xr Hud layer).
+//  * In-world HUD: the game's UI draws are moved to a texture of our own, so the eyes get the scene without UI
+//    and the UI becomes a panel in the world (xr Hud layer). JWE3 draws its UI into a texture of its own
+//    (UI.UIDetect = texture, the default): bindings of that texture are swapped for ours. The older modes swap
+//    the backbuffer inside the UI pass (markers in UI.UIMarkers) or after the first bindings of a frame.
 //  * Per-eye TAA history (alternate-eye mode): after the first TAA pass of a frame (markers in
 //    Performance.TAAMarkers) its output is stashed for the eye that frame will be shown to (the rig's next
 //    request), and before that eye's next TAA pass the stash is copied back into the history the pass
@@ -27,8 +28,14 @@ struct FrameInfo {
     ID3D12Resource* backbuffers[4]{};
 };
 
-// Clears the UI texture on our own queue (after its contents were copied to the HUD panel).
+// After the UI texture was copied to the HUD panel: clears it on our own queue for the next frame's UI.
 void ClearHud();
+// Present: whether the panel swapchain can take the UI texture (no redirect before it can be shown).
+void SetHudOutputReady(bool ready);
+// The view format the HUD panel should show the UI texture through (its swapchain format); UNKNOWN before it exists.
+DXGI_FORMAT HudViewFormat();
+// A game copy into the backbuffer: its source is where the game drew scene + UI (the HUD redirect's target).
+void OnCopyToBackbuffer(ID3D12Resource* src);
 
 // Render thread, at Present (before the eye copies). Builds/updates the shading-rate image and the
 // UI texture, and advances the frame parity.
@@ -37,6 +44,8 @@ void OnPresent(const FrameInfo& info);
 // UI captured this frame (call once per Present after OnPresent): the texture to show as the HUD panel,
 // in RENDER_TARGET state, or null if the UI pass was not redirected.
 ID3D12Resource* TakeHudTexture();
+// The HUD texture itself (debug dumps), whether or not the UI drew into it this frame.
+ID3D12Resource* PeekHudTexture();
 bool WorldHudActive(); // the UI pass has been redirected recently (Lua keeps the GUI on)
 
 // Hooks (game threads, while recording)
@@ -48,6 +57,12 @@ bool OnSetRenderTargets(ID3D12GraphicsCommandList* list, UINT count, const D3D12
 void OnBeginEvent(ID3D12GraphicsCommandList* list, const std::string& name);
 void OnEndEvent(ID3D12GraphicsCommandList* list);
 void OnBarrier(ID3D12GraphicsCommandList* list, UINT count, const D3D12_RESOURCE_BARRIER* barriers);
+// A render-target clear (traced for UI textures; the clear itself is left alone).
+void OnClearRtv(ID3D12GraphicsCommandList* list, D3D12_CPU_DESCRIPTOR_HANDLE view);
+
+// Debug (JWE3VR_rt.req): log the render targets the next frame binds, then save each large one as
+// JWE3VR_rt<n>.bmp, captured inside the game's list just before it stops being a render target.
+void RequestCensus();
 
 // Shared helper: does `name` contain any comma-separated key of `keys`?
 bool MarkerMatches(const std::string& name, const std::string& keys);

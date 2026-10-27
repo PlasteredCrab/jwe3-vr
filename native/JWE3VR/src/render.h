@@ -29,6 +29,12 @@ ID3D12Resource* NextBackbuffer();
 // images or upload/readback buffers). False = still running: callers must not free what those copies use.
 bool WaitCopies();
 
+// Debug BMPs: can texels of this format be decoded, and write a readback buffer holding one texture copy
+// (footprint `fp`, decoded as `format`) as <file> next to the DLL.
+bool DebugFormatSupported(DXGI_FORMAT format);
+bool SaveReadbackBmp(ID3D12Resource* rb, const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& fp, DXGI_FORMAT format, UINT w, UINT h,
+                     const wchar_t* file);
+
 // Lua bridge flags.
 void SetTabletVisible(bool visible);
 // Pointer dot (laser hit / rifle sight) at a stage-space position.

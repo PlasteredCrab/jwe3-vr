@@ -44,7 +44,12 @@ $pack = Join-Path (Split-Path -Parent (Split-Path -Parent $here)) 'pack\JWE3VR\M
 $luaFails = 0
 foreach ($lua in Get-ChildItem $pack -Filter '*.lua') {
     & $luac -p $lua.FullName
-    if ($LASTEXITCODE -ne 0) { $luaFails++ }
+    if ($LASTEXITCODE -ne 0) { $luaFails++; continue }
+    # Globals: the pack reaches everything through _G ("local global = _G") and module(); any other global is
+    # a local used before its declaration or a typo, which only fails at run time in the game.
+    $globals = & $luac -p -l -l $lua.FullName | Select-String -Pattern '[GS]ETTABUP.*_ENV "([A-Za-z_][A-Za-z0-9_]*)"' |
+        ForEach-Object { $_.Matches[0].Groups[1].Value } | Where-Object { $_ -notin @('_G', 'module') } | Sort-Object -Unique
+    if ($globals) { Write-Host "$($lua.Name): unexpected globals: $($globals -join ', ')"; $luaFails++ }
 }
-if ($luaFails) { throw "$luaFails pack Lua file(s) failed the syntax check" }
+if ($luaFails) { throw "$luaFails pack Lua file(s) failed the syntax / globals check" }
 Write-Host "pack Lua syntax ok ($((Get-ChildItem $pack -Filter '*.lua').Count) files)"

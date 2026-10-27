@@ -19,6 +19,7 @@ struct Swap {
     XrSwapchain handle = XR_NULL_HANDLE;
     std::vector<ID3D12Resource*> images;
     UINT width = 0, height = 0;
+    DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     bool acquired = false;
 };
 
@@ -37,7 +38,9 @@ static XrFrameState g_frame{XR_TYPE_FRAME_STATE};
 static bool g_frameBegun = false;
 static bool g_needsReinit = false;
 static UINT g_failedW = 0, g_failedH = 0; // swapchain size that failed last (no retry spam)
-static Swap g_swaps[5]; // Left, Right, Screen, Hud (frame-sized), Dot (kDotSize)
+static UINT g_hudFailedW = 0, g_hudFailedH = 0;
+static DXGI_FORMAT g_hudFailedFormat = DXGI_FORMAT_UNKNOWN;
+static Swap g_swaps[5]; // Left, Right, Screen, Hud (the UI texture's size and format), Dot (kDotSize)
 static XrPosef g_hudPose{{0, 0, 0, 1}, {0, 1.4f, -1.4f}};
 static bool g_hudPlaced = false;
 static Pose g_rawHead;
@@ -278,6 +281,7 @@ void Shutdown() {
 }
 
 bool Running() { return g_running; }
+int SessionState() { return (int)g_state; }
 bool NeedsReinit() { return g_needsReinit; }
 
 static void PollEvents() {
@@ -469,6 +473,36 @@ static DXGI_FORMAT SrgbOf(DXGI_FORMAT f) {
     }
 }
 
+static bool CreateSwap(Swap& s, UINT w, UINT h, DXGI_FORMAT format) {
+    XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+    ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+    ci.format = format;
+    ci.sampleCount = 1;
+    ci.width = w;
+    ci.height = h;
+    ci.faceCount = 1;
+    ci.arraySize = 1;
+    ci.mipCount = 1;
+    if (!Ok(xrCreateSwapchain(g_session, &ci, &s.handle), "xrCreateSwapchain")) return false;
+    uint32_t ic = 0;
+    xrEnumerateSwapchainImages(s.handle, 0, &ic, nullptr);
+    std::vector<XrSwapchainImageD3D12KHR> imgs(ic, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
+    xrEnumerateSwapchainImages(s.handle, ic, &ic, (XrSwapchainImageBaseHeader*)imgs.data());
+    for (auto& img : imgs) s.images.push_back(img.texture);
+    s.width = w;
+    s.height = h;
+    s.format = format;
+    return true;
+}
+
+static std::vector<int64_t> RuntimeFormats() {
+    uint32_t n = 0;
+    xrEnumerateSwapchainFormats(g_session, 0, &n, nullptr);
+    std::vector<int64_t> fmts(n);
+    xrEnumerateSwapchainFormats(g_session, n, &n, fmts.data());
+    return fmts;
+}
+
 static void DestroySwapchains() {
     render::WaitCopies(); // copies into the old images may still be in flight
     for (Swap& s : g_swaps) {
@@ -484,10 +518,7 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
     DestroySwapchains();
     g_failedW = width;
     g_failedH = height;
-    uint32_t n = 0;
-    xrEnumerateSwapchainFormats(g_session, 0, &n, nullptr);
-    std::vector<int64_t> fmts(n);
-    xrEnumerateSwapchainFormats(g_session, n, &n, fmts.data());
+    std::vector<int64_t> fmts = RuntimeFormats();
     DXGI_FORMAT want = SrgbOf(bb);
     g_format = DXGI_FORMAT_UNKNOWN;
     for (int64_t f : fmts)
@@ -500,28 +531,12 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
         return false;
     }
     for (int i = 0; i < 5; ++i) {
-        Swap& s = g_swaps[i];
+        if (i == (int)SwapId::Hud) continue; // EnsureHudSwapchain: sized and formatted like the game's UI texture
         UINT w = i == 4 ? kDotSize : width, h = i == 4 ? kDotSize : height;
-        XrSwapchainCreateInfo ci{XR_TYPE_SWAPCHAIN_CREATE_INFO};
-        ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-        ci.format = g_format;
-        ci.sampleCount = 1;
-        ci.width = w;
-        ci.height = h;
-        ci.faceCount = 1;
-        ci.arraySize = 1;
-        ci.mipCount = 1;
-        if (!Ok(xrCreateSwapchain(g_session, &ci, &s.handle), "xrCreateSwapchain")) {
+        if (!CreateSwap(g_swaps[i], w, h, g_format)) {
             DestroySwapchains(); // all or none: EndFrame must never reference a missing one
             return false;
         }
-        uint32_t ic = 0;
-        xrEnumerateSwapchainImages(s.handle, 0, &ic, nullptr);
-        std::vector<XrSwapchainImageD3D12KHR> imgs(ic, {XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR});
-        xrEnumerateSwapchainImages(s.handle, ic, &ic, (XrSwapchainImageBaseHeader*)imgs.data());
-        for (auto& img : imgs) s.images.push_back(img.texture);
-        s.width = w;
-        s.height = h;
     }
     g_screenAspect = (float)width / (float)height;
     rig::SetRenderAspect(g_screenAspect);
@@ -531,6 +546,42 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
 }
 
 DXGI_FORMAT SwapFormat() { return g_format; }
+
+// The typeless-group sibling a copy can still go to (sRGB <-> UNORM) when the runtime lacks the exact format.
+static DXGI_FORMAT CopySibling(DXGI_FORMAT f) {
+    switch (f) {
+    case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB: return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case DXGI_FORMAT_R8G8B8A8_UNORM: return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB: return DXGI_FORMAT_B8G8R8A8_UNORM;
+    case DXGI_FORMAT_B8G8R8A8_UNORM: return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    default: return f;
+    }
+}
+
+bool EnsureHudSwapchain(UINT width, UINT height, DXGI_FORMAT format) {
+    Swap& s = g_swaps[(int)SwapId::Hud];
+    if (!g_session || !g_swaps[0].handle) return false; // after the eye swapchains (they may be recreated)
+    if (s.handle && s.width == width && s.height == height && (s.format == format || s.format == CopySibling(format))) return true;
+    if (width == g_hudFailedW && height == g_hudFailedH && format == g_hudFailedFormat) return false;
+    if (s.handle) {
+        render::WaitCopies();
+        xrDestroySwapchain(s.handle);
+        s = Swap{};
+    }
+    std::vector<int64_t> fmts = RuntimeFormats();
+    DXGI_FORMAT use = DXGI_FORMAT_UNKNOWN;
+    for (DXGI_FORMAT f : {format, CopySibling(format)})
+        for (int64_t r : fmts)
+            if (use == DXGI_FORMAT_UNKNOWN && (DXGI_FORMAT)r == f) use = f;
+    if (use == DXGI_FORMAT_UNKNOWN || !CreateSwap(s, width, height, use)) {
+        LOGE("in-world HUD: the headset runtime has no swapchain format the UI texture (%d) can be copied into", (int)format);
+        s = Swap{};
+        g_hudFailedW = width, g_hudFailedH = height, g_hudFailedFormat = format;
+        return false;
+    }
+    LOGI("in-world HUD: panel swapchain %ux%u format %d (UI texture format %d)", width, height, (int)use, (int)format);
+    return true;
+}
 
 ID3D12Resource* AcquireImage(SwapId id) {
     Swap& s = g_swaps[(int)id];
@@ -604,7 +655,7 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
         hud.subImage.swapchain = g_swaps[3].handle;
         hud.subImage.imageRect = FullRect(g_swaps[3]);
         hud.pose = g_hudPose;
-        hud.size = {w, w / g_screenAspect};
+        hud.size = {w, w * g_swaps[3].height / (float)g_swaps[3].width};
         layers[layerCount++] = (XrCompositionLayerBaseHeader*)&hud;
     }
     if (in.dot && g_swaps[4].handle && g_frame.shouldRender && g_rawHeadValid) {
@@ -662,7 +713,7 @@ bool HudRect(Vec3& centre, Vec3& right, Vec3& up, float& halfW, float& halfH) {
     right = Rotate(p.q, {1, 0, 0});
     up = Rotate(p.q, {0, 1, 0});
     halfW = config::Get().hudWidth * 0.5f;
-    halfH = halfW / g_screenAspect;
+    halfH = halfW * g_swaps[3].height / (float)g_swaps[3].width;
     return true;
 }
 

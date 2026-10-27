@@ -58,10 +58,14 @@ LaserSmoothing = 12
 HideHudImmersive = 1
 ScreenDistance = 2.0
 ScreenWidth = 2.4
-; In-world HUD: the game's UI is drawn into its own texture (render pass markers below) and shown as a
-; floating panel instead of being painted onto both eyes. Needs the game to emit pass markers; the log
-; says "in-world HUD active" when it works, otherwise the tablet is used.
+; In-world HUD: the game's UI is drawn into its own texture and shown as a floating panel instead of being
+; painted onto both eyes. The log says "in-world HUD active" when it works, otherwise the tablet is used.
 WorldHud = 1
+; How UI drawing is found: "texture" (default) finds the texture JWE3 draws its UI into and moves those draws to
+; the panel; "backbuffer" treats render-target bindings of the backbuffer as UI, after the first
+; UISkipBackbufferBinds of each frame; "markers" uses the pass names in UIMarkers.
+UIDetect = texture
+UISkipBackbufferBinds = 0
 UIMarkers = Gameface,Renoir,Scaleform,UIRender,HUD
 HudDistance = 1.4
 HudWidth = 1.6
@@ -163,6 +167,9 @@ void Load() {
 
     s.worldHud = Bool(L"UI", L"WorldHud", s.worldHud);
     s.uiMarkers = Str(L"UI", L"UIMarkers", s.uiMarkers.c_str());
+    std::string detect = Str(L"UI", L"UIDetect", "texture");
+    s.uiDetect = detect == "markers" ? UiDetect::Markers : detect == "backbuffer" ? UiDetect::Backbuffer : UiDetect::Texture;
+    s.uiSkipBackbufferBinds = (int)Num(L"UI", L"UISkipBackbufferBinds", (float)s.uiSkipBackbufferBinds);
     s.hudDistance = Num(L"UI", L"HudDistance", s.hudDistance);
     s.hudWidth = Num(L"UI", L"HudWidth", s.hudWidth);
     s.hudDropDeg = Num(L"UI", L"HudDropDeg", s.hudDropDeg);

@@ -92,7 +92,9 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
             local sEntities = sCmm == "table" and global.type(global.rawget(cmm, "tEntities")) or "n/a"
             Bridge.Text("camera diag: mode Advance calls " .. tostring(Camera.nModeCalls or 0) .. ", last skip " ..
                         tostring(Camera.sSkip) .. ", driven " .. tostring(Camera.bModeDriven) .. ", mode " ..
-                        tostring(Camera.sMode) .. "; world CameraModeManager is " .. sCmm .. ", tEntities " .. sEntities)
+                        tostring(Camera.sMode) .. "; world CameraModeManager is " .. sCmm .. ", tEntities " .. sEntities ..
+                        "; manager-path ticks " .. tostring(Camera.nTicks or 0) .. ", of which read back our own write " ..
+                        tostring(Camera.nOwnReads or 0))
         end)
         if not bOk then Bridge.Text("camera diag failed: " .. tostring(sErr)) end
     end

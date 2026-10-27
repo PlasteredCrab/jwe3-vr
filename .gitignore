@@ -26,3 +26,5 @@ __pycache__/
 *.log
 *.dmp
 JWE3VR.ini
+# Claude Code session files
+.claude/
