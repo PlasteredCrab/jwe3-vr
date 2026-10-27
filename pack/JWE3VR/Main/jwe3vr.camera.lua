@@ -243,14 +243,19 @@ Camera.SeatCamera = function(vehicles, nVehicle)
     return tSeat.nUsage, tSeat.sWhich
 end
 
--- JWE3 shows helicopters only from behind (VehicleUtils.CanSwitchCamera), and that camera writes the transform
--- after the VR manager, so the rig cannot move it. If the vehicle has a seat camera, ask the camera manager for
--- the first-person mode on it - what the jeep gets from StartInFirstPerson. Retried a few times per vehicle.
+-- JWE3 shows helicopters only from behind (VehicleUtils.CanSwitchCamera) - a chase camera is no place for a VR
+-- view. If the helicopter has a seat camera, ask the camera manager for the first-person mode on it (what the jeep
+-- gets from StartInFirstPerson). Helicopters only: cars switch camera themselves, and a player who picks the
+-- chase view or a lock-on there keeps it. A few tries per stay in the chase camera (reset once seated).
 Camera.tSeatRequests = {}
 Camera.RequestSeatCamera = function(cmm, tWorld, Gameplay)
     local nVehicle = CameraVehicle(cmm, Gameplay)
     if not nVehicle or nVehicle == 0 or not cmm or not cmm.RequestMode then return nil end
-    local nUsage, sWhich = Camera.SeatCamera(tWorld and tWorld.vehicles, nVehicle)
+    local vehicles = tWorld and tWorld.vehicles
+    if not vehicles or not vehicles.GetVehicleType then return nil end
+    local bOkType, nType = pcall(vehicles.GetVehicleType, vehicles, nVehicle)
+    if not bOkType or nType == nil or nType ~= vehicles.VehicleType_Helicopter then return nil end
+    local nUsage, sWhich = Camera.SeatCamera(vehicles, nVehicle)
     if not nUsage then return nil end
     local tReq = Camera.tSeatRequests[nVehicle] or {nTries = 0, nWait = 0}
     Camera.tSeatRequests[nVehicle] = tReq
@@ -342,8 +347,10 @@ Camera.ManagerTick = function(nDt, bFromInstance)
     local nKind = Camera.KindFor(sMode)
     local vPos, vR, vU, vF = anchor:GetPos(), anchor:GetR(), anchor:GetU(), anchor:GetF()
     local sSeat = nil
-    if sTag == "drive" and (sGameMode == "ThirdPersonVehicle" or sGameMode == "VehicleLockOn") then
+    if sTag == "drive" and sGameMode == "ThirdPersonVehicle" then
         sSeat = Camera.RequestSeatCamera(cmm, tWorld, Gameplay)
+    elseif sGameMode == "FirstPersonVehicle" then
+        Camera.tSeatRequests = {} -- seated: a later fall back to the chase camera gets fresh tries
     end
     if nKind == K.Gunner then
         -- Sit at the gun mount, oriented like the vehicle body (the turret must not swing the world).

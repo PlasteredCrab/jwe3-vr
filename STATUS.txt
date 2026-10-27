@@ -1,6 +1,18 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.11  Vehicle transitions with the virtual pad (remote runs 59-61, headset not worn)
+    - Jeep: pad Y -> gun seat (rig kind 4 at the gun mount), B -> back to the driver's seat (FirstPersonVehicle, rig
+      kind 3), B -> out of the vehicle (park camera, rig kind 1, no UI mode left). Helicopter: B -> out, camera back to
+      the park camera (the requested first-person mode does not stick). Pad Y does nothing in the landed helicopter
+      (its gun seat is Helicopter_SwitchToGunner; binding not found yet).
+    - Correction to 0.0.9: "the first input after the pad appears only makes it the active device" was wrong. At 2 fps
+      the game reads the pad about twice a second, so a 300 ms scripted press often fell between two reads; 1.5 s
+      presses work every time, Y alone included. (At headset frame rates this does not arise.)
+    - The helicopter seat request is now limited to helicopters in their chase camera (cars switch camera
+      themselves, and a lock-on or a chosen chase view on a car is left alone), with fresh tries after each time the
+      seat camera was reached (before: 5 tries per vehicle per session).
+
 2026-10-27  0.0.10  Alternate-eye pairing checked in game (remote run 57, headset not worn)
     - New debug aid JWE3VR_aer.req: the next 8 presented frames are saved as JWE3VR_aer<n>_eye<e>.bmp with the eye and
       rig tick each is paired with. Run with IPDScale = 20 (eyes ~38 m apart at the 1:30 park scale) in the park:

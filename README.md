@@ -102,6 +102,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep / helicopter seat | Both grips, turn your hands | Steering wheel |
 | Jeep / helicopter seat | Head | Look around |
 | Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3) |
+| Jeep / helicopter seat, gun seat | Dominant B | The game's Back (pad B): gun seat to driver's seat, then out of the vehicle |
 | Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
 | Gun seat | Dominant hand | Aim (the gun follows it) |
 | Gun seat | Dominant trigger | Fire (haptic kick) |
