@@ -1,6 +1,20 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.4  VR camera drives the rendered frame in a JWE3 park (remote test, headset on the desk, not worn)
+    - Found why the camera never ticked: a park shares the startup Lua state (startup globals visible from the
+      park), so every hook is in force, but the camera component (CameraModeManager and its mode modules) runs in
+      a Lua state the mod cannot reach: neither the manager wrapper nor the 23 mode wrappers is ever called.
+    - New camera path (JWE3VR.Camera.ManagerTick): the VR manager's Advance reads the camera transform the game
+      produced, uses it as the anchor (never its own previous write), runs the rig and writes SetTransform/SetFOVY.
+      Log: "camera tick (manager path): mode Standard, VR override 1.0". The screenshot (re/work/run14_park2.png)
+      shows the rig's camera: level horizon, 116 deg FOV, eye at the headset's height; foveation switched on by
+      itself ("VRS tier 2 ... rate image for 116 deg FOV"). So the manager runs after the camera component.
+    - Also: managers get Advance(dt) only (no unscaled dt) and a paused park passes dt 0; diagnostics count frames.
+    - Open: the camera mode name comes from GetWorldAPIs().CameraModeManager only if that is reachable (not yet
+      confirmed; defaults to Standard, so walking/vehicles would use the overview rig until this is solved);
+      head motion, stereo depth and controllers untested (nobody wore the headset); HUD/TAA pass detection.
+
 2026-10-26  0.0.3  First runs in JWE3 (main menu only, no headset worn, remote over RDP; no park loaded)
     - Installed with deploy.ps1 -NoProxy (new): no version.dll next to JWE3.exe, because this PC runs Sophos Endpoint
       Defense and DLL side-loading is what it watches; JWE3VR.Hooks.Install now loads JWE3VR.dll through the game's

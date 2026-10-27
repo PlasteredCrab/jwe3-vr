@@ -176,6 +176,8 @@ end
 Hooks.Install = function()
     if Hooks.bInstalled then return end
     Hooks.bInstalled = true
+    -- Diagnostic: lets later code tell whether it runs in this same Lua state (a park may be a coroutine).
+    global.__JWE3VR_StartupToken = "yes"
     -- Load JWE3VR.dll now, at game start: this is how the DLL gets into the process when no version.dll
     -- proxy is installed (deploy.ps1 -NoProxy), and it lets the log confirm the bridge from the menu.
     local bOk, Bridge = pcall(global.require, "JWE3VR.Bridge")

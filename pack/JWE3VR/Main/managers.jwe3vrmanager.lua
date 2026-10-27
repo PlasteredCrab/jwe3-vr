@@ -63,18 +63,38 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
     if not self.bReady then return end
     -- JWE3 environments pass only the (scaled) delta time to the Advance phase.
     _nUnscaledDeltaTime = _nUnscaledDeltaTime or _nDeltaTime or 0
-    -- Camera diagnostic for the first JWE3 runs: 5 s into the park, report what the mode wrappers saw.
-    self.nDiagTime = (self.nDiagTime or 0) + _nUnscaledDeltaTime
-    if not self.bCameraDiag and self.nDiagTime > 5 then
+    -- Diagnostics for the first JWE3 runs (all protected: an error here must not stop Advance).
+    if not self.bFirstAdvanceLogged then
+        self.bFirstAdvanceLogged = true
+        pcall(function()
+            local co, bMain = global.coroutine.running()
+            Bridge.Text("manager Advance: first call, dt " .. tostring(_nDeltaTime) .. ", coroutine " ..
+                        tostring(co ~= nil and not bMain) .. ", startup globals visible " .. tostring(global.__JWE3VR_StartupToken))
+        end)
+    end
+    -- Drive the camera from here when no camera wrapper ever runs (JWE3: camera component out of reach).
+    local Camera = require("JWE3VR.Camera")
+    if not Camera.bModeDriven and not Camera.bManagerDriven then
+        local bOk, sErr = pcall(Camera.ManagerTick, _nUnscaledDeltaTime)
+        if not bOk and not self.bManagerCameraError then
+            self.bManagerCameraError = true
+            Bridge.Text("camera (manager path) failed: " .. tostring(sErr))
+        end
+    end
+    self.nDiagFrames = (self.nDiagFrames or 0) + 1 -- frames, not time: a paused park passes dt 0
+    if not self.bCameraDiag and self.nDiagFrames > 300 then
         self.bCameraDiag = true
-        local Camera = require("JWE3VR.Camera")
-        local bOk, tWorld = pcall(api.world.GetWorldAPIs)
-        local cmm = bOk and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
-        Bridge.Text("camera diag (manager VM): mode Advance calls " .. tostring(Camera.nModeCalls or 0) ..
-                    ", last skip " .. tostring(Camera.sSkip) .. ", driven " .. tostring(Camera.bModeDriven) ..
-                    ", mode " .. tostring(Camera.sMode) .. "; world CameraModeManager " .. global.type(cmm) ..
-                    ", tEntities " .. global.type(cmm and global.rawget(cmm, "tEntities")) ..
-                    ", Advance patched " .. tostring(cmm and cmm.Advance and global.rawequal(cmm.Advance, (global.package.loaded["Components.Cameras.CameraModeManager"] or {}).Advance)))
+        local bOk, sErr = pcall(function()
+            local Camera = require("JWE3VR.Camera")
+            local bW, tWorld = pcall(api.world.GetWorldAPIs)
+            local cmm = bW and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
+            local sCmm = global.type(cmm)
+            local sEntities = sCmm == "table" and global.type(global.rawget(cmm, "tEntities")) or "n/a"
+            Bridge.Text("camera diag: mode Advance calls " .. tostring(Camera.nModeCalls or 0) .. ", last skip " ..
+                        tostring(Camera.sSkip) .. ", driven " .. tostring(Camera.bModeDriven) .. ", mode " ..
+                        tostring(Camera.sMode) .. "; world CameraModeManager is " .. sCmm .. ", tEntities " .. sEntities)
+        end)
+        if not bOk then Bridge.Text("camera diag failed: " .. tostring(sErr)) end
     end
     -- Hooked modules loaded after park start (UI modes on first use) through a captured require.
     if not self.bHooksDone then

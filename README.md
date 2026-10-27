@@ -7,11 +7,12 @@ Ported from [JWE2 VR](https://github.com/PlasteredCrab/jwe2-vr) (same studio, sa
 
 Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
-> **Status: Phase 0 done offline, not yet run in the game.** Checked against JWE3 build 1792088119 (Steam build
-> 25967550): the exe, the Lua stack layout, every Lua binding the mod calls and the decompiled game Lua it hooks.
-> The code was updated for what changed (see [Phase 0 checklist](#phase-0-checklist)). It builds, the offline
-> tests pass and the content pack packs into a JWE3 `Main.ovl`. **Nothing has run in JWE3 or a headset yet.**
-> Features below describe what the code does, not what has been seen working.
+> **Status: first runs in JWE3 (game 1.5.5, build 1792088119), headset not worn.** Seen working in the game: the
+> mod loads without a proxy DLL, the Lua bridge and hooks run, OpenXR starts on SteamVR, and in a Sandbox park the
+> VR rig drives the rendered camera (level horizon, headset FOV, foveated rendering on). Not yet seen: head motion
+> and stereo depth in a worn headset, controllers, the camera mode per game mode (walking/vehicles), the in-world
+> HUD and per-eye TAA (retail JWE3 has no render-pass markers). Features below describe what the code does; see
+> `STATUS.txt` for what each run showed.
 
 ## Features
 
@@ -113,7 +114,8 @@ Nothing below has been confirmed at runtime.
 | Lua bindings | 5,422 found; 90 (1.7%) jump into the VM. JWE3 adds a second registration pattern (function in `r8`, name in `rdx`) | `luaapi.py` reads both patterns |
 | Content-pack Lua loading | `Database.Main` calls `AddContentToCall` on `Database.<Pack>LuaDatabase` for every loaded pack, at startup | None |
 | Park manager injection | `EnvironmentPrototype.Managers` as on JWE2, but `Environment.Environment` loads prototypes through a `require` saved at game start, past our wrap | Hooks wrap `Environment._MergePrototype` to load the prototype through our `require` first |
-| Camera choke point | `CameraModeManager.Advance` -> `SetTransform(main camera, tFinal.transformQ)`, `SetFOVY(nCameraFOV / nMagnify)`; `GetConfig().bCameraShake`; walking eye height 1.67 m (metres) | New modes mapped: Freelook and MapGenerator (overview), NestExit (flat screen) |
+| Camera choke point | `CameraModeManager.Advance` -> `SetTransform(main camera, tFinal.transformQ)`, `SetFOVY(nCameraFOV / nMagnify)`; `GetConfig().bCameraShake`; walking eye height 1.67 m (metres). In game: the camera component runs in a Lua state the mod cannot reach, so wrapping it does nothing | The VR manager reads the game's camera each frame and writes the VR camera over it (seen working); new modes mapped: Freelook and MapGenerator (overview), NestExit (flat screen) |
+| Lua states | A park shares the startup Lua state; `api.*` tables are read-only ("Scripts may NOT modify the API") | Laser picking wraps `Helpers.RaycastUtils.GetCursorRaycast` instead of `api.input.GetMouseRay` |
 | Vehicle entry | Same `RequestChangeUI` / `DriveVehicle` call; JWE2's `_SetCameraMode` is gone; `StartInFirstPerson` init flag is new | Drive-mode patch sets `StartInFirstPerson` |
 | Gunner aim and ammo | `GetCameraAimDirection`, `GetCameraAttachTransform`, `tModeData.gunnerID`, `VehicleGunnerUIMode:_SwitchAmmo` unchanged | None |
 | Staff orders | `SelectVehicleDestination` with `{Vehicle, OrderPriority}` unchanged; `FindAvailableRangerCar` / `FindAvailableACUHelicopter` removed | New `jwe3vr.vehicles.lua` finds the nearest ranger car / ACU helicopter from the AI director's own tables |
@@ -190,11 +192,16 @@ The file is written with comments on first run. The ones you are most likely to 
 
 ## Troubleshooting
 
-- **No VR at all:** check `JWE3VR.log`. "OpenXR init failed" = runtime not running. No log = `version.dll` not loaded.
+- **No VR at all:** check `JWE3VR.log`. "OpenXR init failed" = runtime not running. No log = the mod never loaded
+  (with `-NoProxy` the game's Lua loads it at startup: look for "bridge: first call from Lua").
 - **3D looks wrong (inside-out, doubled, one eye a frame late):** set `AERPresentLag` to 0, 1 or 2, or flip `SwapEyes`.
-- **Camera does not follow the head:** the Lua side isn't running. Look in the game's Lua trace for
-  "JWE3VR: hooks installed", "JWE3VR: manager added to the park environment" and "JWE3VR: bridge loaded", and in
-  `JWE3VR.log` for "bridge: unexpected Lua stack layout".
+- **Camera does not follow the head:** the Lua side reports into `JWE3VR.log` (lines starting `lua:`). Expect
+  "hooks installed", "VR manager Init (park loaded)", "gameplay init done", then "camera tick (manager path): ...
+  VR override 1.0". "bridge: unexpected Lua stack layout" means a game update changed the Lua layout.
+- **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
+  `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), `FOCUS`, keys and pad buttons (format in `input.cpp`). The game reads
+  no XInput on its menus and ignores posted keys; clicks register only while it has focus (add `FOCUS`).
+  `re/remote/to_continue.sh` drives a full run into the last Sandbox save.
 - **HUD stays flat in both eyes / no panel:** look for "in-world HUD active" in the log. If it never appears, turn on
   `MarkerDump`, find the UI pass name in the log and add it to `UIMarkers`; until then the tablet shows the HUD.
 - **Blurry edges:** lower foveation (`FoveaInnerDeg` up, or `Foveation = 0`). "foveation: VRS tier 2" in the log
@@ -223,6 +230,7 @@ The file is written with comments on first run. The ones you are most likely to 
 | `native/JWE3VR/test` | Offline checks (rig math; the bridge against a fake `lua_State`) |
 | `pack/JWE3VR` | Content pack: own module hooks, camera wrap, gameplay, on-foot ranger, staff wand |
 | `re/tools` | `survey.py` (Phase 0 binary survey), strings / LEA scan / Lua binding map / refs / disassembly, Lua decompile, `luagrep.py` (search extracted Lua) |
+| `re/remote` | Remote test runs without a person at the PC: deploy, launch, click into a park, screenshots, logs |
 | `re/ghidra.ps1`, `re/ghidra_scripts` | Headless Ghidra: import with the Denuvo blob removed, decompile `re/targets.txt` |
 | `third_party/fetch.ps1` | Fetches MinHook, the OpenXR loader SDK and the Lua 5.3 source |
 

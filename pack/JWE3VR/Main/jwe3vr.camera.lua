@@ -116,6 +116,7 @@ Camera.Patch = function(tModule)
     local fnAdvance = tModule.Advance
     tModule.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
         fnAdvance(self, _nDeltaTime, _nUnscaledDeltaTime)
+        Camera.bManagerDriven = true
         if Camera.bModeDriven then return end -- the mode wrappers already drive the camera
         local bOk, sErr = pcall(Camera.AfterAdvance, self, _nUnscaledDeltaTime)
         if not bOk and not Camera.bErrorLogged then
@@ -184,6 +185,63 @@ Camera.AfterAdvance = function(self, _nDt)
     api.camera.SetFOVY(camID, nFovY)
     -- Make the manager re-send the game's FOV the moment VR stops overriding it.
     tData.nFOVY = nil
+end
+
+-- JWE3 fallback when neither wrapper is ever called (the camera component runs in a Lua state the mod
+-- cannot reach): from the VR manager's Advance, take the camera transform the game produced as the anchor
+-- and write the VR camera over it. What we wrote last time is remembered, so a read-back of our own write
+-- never becomes the anchor (that would compound the head pose every frame).
+local SameTransform = function(a, b)
+    if not a or not b then return false end
+    local pa, pb = a:GetPos(), b:GetPos()
+    local fa, fb = a:GetF(), b:GetF()
+    local d = global.math.abs
+    return d(pa:GetX() - pb:GetX()) + d(pa:GetY() - pb:GetY()) + d(pa:GetZ() - pb:GetZ()) < 1e-4 and
+           d(fa:GetX() - fb:GetX()) + d(fa:GetY() - fb:GetY()) + d(fa:GetZ() - fb:GetZ()) < 1e-5
+end
+
+Camera.ManagerTick = function(nDt)
+    if not Bridge.IsLoaded() then return end
+    local camID = api.camera.GetMainCameraID()
+    if not camID or camID <= 0 then return end
+    local current = api.transform.GetTransform(camID)
+    if not current then return end
+    if not SameTransform(current, Camera.lastSet) then Camera.lastAnchor = current end
+    local anchor = Camera.lastAnchor
+    if not anchor then return end
+    if not Camera.bManagerPathLogged then
+        Camera.bManagerPathLogged = true
+        Bridge.Text("camera: driven from the VR manager (camera component not reachable)")
+    end
+    -- The current mode name, if the world API exposes the camera manager to this Lua state.
+    local sMode = Camera.sMode or "Standard"
+    local bOk, tWorld = pcall(api.world.GetWorldAPIs)
+    local cmm = bOk and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
+    if cmm and cmm.GetCurrentModeName then
+        local bOk2, s = pcall(cmm.GetCurrentModeName, cmm)
+        if bOk2 and global.type(s) == "string" then sMode = s end
+    end
+    local nKind = Camera.KindFor(sMode)
+    if sMode ~= Camera.sMode then
+        Bridge.Log(Bridge.M.CameraKind, nKind)
+        Bridge.Text("camera mode " .. sMode .. " (rig kind " .. tostring(nKind) .. ")")
+    end
+    Camera.sMode, Camera.nKind = sMode, nKind
+    local bOverride, px, py, pz, fx, fy, fz, ux, uy, uz, nFovY =
+        Bridge.Tick(nKind, nDt or 0, anchor:GetPos(), anchor:GetR(), anchor:GetU(), anchor:GetF())
+    if Camera.nLoggedOverride ~= bOverride then
+        Camera.nLoggedOverride = bOverride
+        Bridge.Text("camera tick (manager path): mode " .. sMode .. ", VR override " .. tostring(bOverride))
+    end
+    if bOverride ~= 1 then
+        Camera.lastSet = nil
+        return
+    end
+    local transform = TransformQ.FromOrPos(Quaternion.FromFU(Vector3:new(fx, fy, fz), Vector3:new(ux, uy, uz)),
+                                           Vector3:new(px, py, pz))
+    api.transform.SetTransform(camID, transform)
+    api.camera.SetFOVY(camID, nFovY)
+    Camera.lastSet = transform
 end
 
 -- The same rig step from a camera mode's Advance (JWE3 path): rewrites the mode's final transform and FOV.
