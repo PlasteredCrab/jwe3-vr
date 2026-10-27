@@ -82,6 +82,9 @@ static bool g_xrTried = false;
 static thread_local bool t_inPresent = false;
 static std::atomic<bool> g_tablet{false};
 static ULONGLONG g_lastConfigCheck = 0;
+static std::atomic<int> g_debugCommand{0};
+
+int TakeDebugCommand() { return g_debugCommand.exchange(0); }
 static xr::EyeView g_views[2];
 
 // Pointer dot (laser / rifle sight): a small premade disc copied into its swapchain while visible.
@@ -584,6 +587,22 @@ static void OnPresent(IDXGISwapChain* sc) {
         if (GetFileAttributesW(scanReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
             DeleteFileW(scanReq.c_str());
             viewcb::RequestScan();
+        }
+        // JWE3VR_drive.req ("jeep" or "heli"): the Lua side takes control of the nearest ranger jeep / ACU
+        // helicopter, as the radio and staff wand pick one (remote tests reach the seats without finding the
+        // response facility on screen).
+        std::wstring driveReq = ModuleDir() + L"JWE3VR_drive.req";
+        if (GetFileAttributesW(driveReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            char text[16]{};
+            FILE* f = nullptr;
+            if (_wfopen_s(&f, driveReq.c_str(), L"r") == 0 && f) {
+                fread(text, 1, sizeof(text) - 1, f);
+                fclose(f);
+            }
+            DeleteFileW(driveReq.c_str());
+            int command = strncmp(text, "heli", 4) == 0 ? 2 : 1;
+            g_debugCommand = command;
+            LOGI("debug: drive request (%s) passed to Lua", command == 2 ? "helicopter" : "jeep");
         }
         // JWE3VR_rt.req: log the render targets of a frame and save each large one (finding the UI target).
         std::wstring rtReq = ModuleDir() + L"JWE3VR_rt.req";

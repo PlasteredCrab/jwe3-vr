@@ -29,6 +29,9 @@ ID3D12Resource* NextBackbuffer();
 // Blocks (up to timeoutMs) until our copies submitted so far have finished on the GPU (before destroying swapchain
 // images or upload/readback buffers). False = still running: callers must not free what those copies use.
 bool WaitCopies(unsigned timeoutMs = 2000);
+// Debug command for the Lua side, consumed when read: 0 none; from JWE3VR_drive.req 1 = take control of the
+// nearest ranger jeep, 2 = of the nearest ACU helicopter.
+int TakeDebugCommand();
 
 // Debug BMPs: can texels of this format be decoded, and write a readback buffer holding one texture copy
 // (footprint `fp`, decoded as `format`) as <file> next to the DLL.

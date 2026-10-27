@@ -34,7 +34,8 @@ enum Op : int {
     OpPlaceScreen = 14, // ()
     OpHudStatus = 15,  // () -> worldHudActive (the game's UI is being shown as a panel in the world)
     OpPointer = 16,    // (visible, x, y, z)  game-space pointer dot (laser hit / rifle sight)
-    OpLogText = 17     // (final, c1..c30)  text from Lua as character codes; logged with the lua_State when final
+    OpLogText = 17,    // (final, c1..c30)  text from Lua as character codes; logged with the lua_State when final
+    OpDebugCommand = 18 // () -> command (render::TakeDebugCommand: 0 none, 1 drive the nearest jeep, 2 helicopter)
 };
 
 constexpr int kProtocol = 1;
@@ -259,6 +260,9 @@ static int Dispatch(uint8_t* L) {
         break;
     case OpHudStatus:
         s.Push(passes::WorldHudActive() ? 1.f : 0.f);
+        break;
+    case OpDebugCommand:
+        s.Push((float)render::TakeDebugCommand());
         break;
     case OpPointer: {
         Vec3 stage;

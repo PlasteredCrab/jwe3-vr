@@ -12,32 +12,45 @@ local pairs = global.pairs
 local pcall = global.pcall
 local type = global.type
 local require = global.require
+local tostring = global.tostring
 
 local Vehicles = module(...)
 
 -- VehicleAIDirector c_nVehicleSubtype_* values
 Vehicles.Subtype = {HelicopterACU = 0, CarRanger = 10}
 
--- Nearest ranger car (or ACU helicopter) to vPos that can be given orders, or nil.
-Vehicles.FindNearestTeam = function(vPos, bHelicopter)
-    if not vPos then return nil end
+-- Nearest ranger car (or ACU helicopter) to vPos that can be given orders, or nil and why not. bAnyState: any
+-- such vehicle, orders or not (taking direct control needs no working facility; in the test park the game refuses
+-- orders for every team, reason 2 = FoundationNotOperational, run 91).
+Vehicles.FindNearestTeam = function(vPos, bHelicopter, bAnyState)
+    if not vPos then return nil, "no position" end
     local tWorld = api.world.GetWorldAPIs()
     local director = tWorld and tWorld.VehicleAIDirector
-    if not director then return nil end
-    local tVehicles = bHelicopter and director.tHelicopters or director.tCars
-    if type(tVehicles) ~= "table" then return nil end
+    if not director then return nil, "no VehicleAIDirector world API" end
+    local sTable = bHelicopter and "tHelicopters" or "tCars"
+    local tVehicles = director[sTable]
+    if type(tVehicles) ~= "table" then return nil, "VehicleAIDirector (" .. type(director) .. ") has no " .. sTable end
     local nWant = bHelicopter and Vehicles.Subtype.HelicopterACU or Vehicles.Subtype.CarRanger
     local bUtils, VehicleUtils = pcall(require, "Helpers.VehicleUtils")
     local vehiclesAPI = director.vehiclesAPI or tWorld.vehicles
     local x, y, z = vPos:GetX(), vPos:GetY(), vPos:GetZ()
     local best, nBest = nil, nil
+    local nAll, nKind, nFree, sRefused = 0, 0, 0, nil
+    local tSubtypes = {}
     for entity, tComponent in pairs(tVehicles) do
+        nAll = nAll + 1
+        if type(tComponent) == "table" then tSubtypes[tostring(tComponent.nSubtype)] = true end
         if type(tComponent) == "table" and tComponent.nSubtype == nWant then
+            nKind = nKind + 1
             local bCan = true
-            if bUtils and VehicleUtils and VehicleUtils.CanVehicleBeIssuedTasks then
-                local bOk, b = pcall(VehicleUtils.CanVehicleBeIssuedTasks, entity, vehiclesAPI, director.civilEngAPI)
+            if not bAnyState and bUtils and VehicleUtils and VehicleUtils.CanVehicleBeIssuedTasks then
+                local bOk, b, reason = pcall(VehicleUtils.CanVehicleBeIssuedTasks, entity, vehiclesAPI, director.civilEngAPI)
                 bCan = bOk and b == true
+                if not bCan and not sRefused then
+                    sRefused = bOk and ("reason " .. tostring(reason)) or ("error: " .. tostring(b))
+                end
             end
+            if bCan then nFree = nFree + 1 end
             local t = bCan and api.transform.GetTransform(entity)
             if t then
                 local p = t:GetPos()
@@ -47,5 +60,9 @@ Vehicles.FindNearestTeam = function(vPos, bHelicopter)
             end
         end
     end
-    return best
+    if best then return best end
+    local sSeen = ""
+    for s in pairs(tSubtypes) do sSeen = sSeen .. " " .. s end
+    return nil, sTable .. ": " .. nAll .. " vehicles (subtypes" .. sSeen .. "), " .. nKind .. " of subtype " .. nWant ..
+                ", " .. nFree .. " can take orders" .. (sRefused and (" (first refusal: " .. sRefused .. ")") or "")
 end

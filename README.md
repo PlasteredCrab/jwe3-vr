@@ -110,6 +110,9 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3; the helicopter only once it is in the air) |
 | Jeep / helicopter seat, gun seat | Dominant B | The game's Back (pad B): gun seat to driver's seat, then out of the vehicle |
 | Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
+| Jeep / helicopter seat | Dominant stick click | Photo mode (the game's pad d-pad right; seen on the jeep's pad, the helicopter not tried) |
+| Photo mode | Dominant A | Take the photo (pad A); the game then shows the photo's details to submit or discard |
+| Photo mode | Dominant B | Back (pad B) |
 | Gun seat | Dominant hand | Aim (the gun follows it) |
 | Gun seat | Dominant trigger | Fire (haptic kick) |
 | Gun seat | Off-hand stick left / right | Previous / next ammo |
@@ -260,6 +263,8 @@ The file is written with comments on first run. The ones you are most likely to 
   `JWE3VR_cbscan.req` searches the game's large read-write memory for the camera position (constant-buffer hunting).
   `JWE3VR_aer.req` saves the next 8 frames as `JWE3VR_aer<n>_eye<e>.bmp` with the eye each is shown to (with a large
   `IPDScale` the eyes' frames differ visibly: a frame for the left eye shows the scene shifted right).
+  `JWE3VR_drive.req` ("jeep" or "heli") takes control of the team vehicle nearest the camera, found as the radio
+  finds one; `re/remote/drive.sh <name> jeep|heli` uses it to reach a seat with no clicks.
 - **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
   panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`
   to see which render target holds the UI; until then the tablet shows the HUD.

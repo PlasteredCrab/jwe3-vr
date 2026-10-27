@@ -256,6 +256,21 @@ Gameplay.TakeControl = function()
     return true
 end
 
+-- Debug (JWE3VR_drive.req): take control of the team vehicle nearest the camera, found as the radio and staff wand
+-- find one (Vehicles.FindNearestTeam, but in any state: direct control needs no working facility), entered as the
+-- laser's take-control enters one.
+Gameplay.DebugDrive = function(bHelicopter)
+    local camID = api.camera.GetMainCameraID()
+    local t = camID and api.transform.GetTransform(camID)
+    local vehicle, sWhy = nil, "no camera"
+    if t then vehicle, sWhy = Vehicles.FindNearestTeam(t:GetPos(), bHelicopter, true) end
+    Bridge.Text("debug drive: nearest " .. (bHelicopter and "ACU helicopter" or "ranger jeep") .. " is " .. tostring(vehicle) ..
+                (vehicle and "" or (" (" .. tostring(sWhy) .. ")")))
+    if not vehicle or not Gameplay.iUIMode then return false end
+    Gameplay.iUIMode:OnModeEvent("RequestChangeUI", "DriveVehicle", {Vehicle = vehicle, DeleteVehicleWhenDone = false})
+    return true
+end
+
 Gameplay.SendTeam = function(bHelicopter)
     local entity, vPos = Gameplay.EntityUnderLaser()
     if not vPos or not Gameplay.iUIMode then return false end
@@ -280,6 +295,11 @@ end
 
 Gameplay.Advance = function(_nDt)
     if not Bridge.IsLoaded() then return end
+    local nDebug = Bridge.DebugCommand()
+    if nDebug == 1 or nDebug == 2 then
+        local bOk, sErr = pcall(Gameplay.DebugDrive, nDebug == 2)
+        if not bOk then Bridge.Text("debug drive failed: " .. tostring(sErr)) end
+    end
     local tl, tr, gl, gr, sxl, syl, sxr, syr, nBits = Bridge.Controls()
     nBits = math.floor(nBits or 0)
     local dom = Gameplay.nDominant
@@ -366,6 +386,15 @@ Gameplay.Advance = function(_nDt)
         nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
         if gl > 0.6 and gr > 0.6 then nButtons = nButtons & ~0x0300 end
         if bTabletChord then nButtons = nButtons & ~XI.Y end
+        -- JWE3 switches to photo mode with pad d-pad right (up / down / left switch to the chase camera; seen in
+        -- game, run 92), and the VR controllers have no d-pad: here the dominant stick click is d-pad right (pad RS
+        -- does nothing in the driver's seat). Not with both clicks, which recentre. In photo mode, A takes the photo.
+        local bClickDom = Has(nBits, dom == 1 and Btn.ClickR or Btn.ClickL)
+        local bClickOff = Has(nBits, dom == 1 and Btn.ClickL or Btn.ClickR)
+        if bClickDom then
+            nButtons = nButtons & ~(0x0040 | 0x0080)
+            if not bClickOff then nButtons = nButtons | 0x0008 end -- XINPUT_GAMEPAD_DPAD_RIGHT
+        end
         nMask = nMask + Ov.Buttons
     elseif nKind == K.Gunner then
         nPad = Bridge.Pad.Passthrough

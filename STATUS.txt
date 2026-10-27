@@ -1,6 +1,26 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.18  Photo mode; the team-vehicle finder checked; seats reached without clicks (runs 88-92)
+    - New debug request JWE3VR_drive.req ("jeep" / "heli", bridge op 18): the Lua side takes control of the team
+      vehicle nearest the camera, found by Vehicles.FindNearestTeam (the radio's and staff wand's finder), entered
+      as the laser's take-control enters one. re/remote/drive.sh uses it: a seat with no clicks, whatever the park
+      camera shows (runs 80 and 88 opened on bare grass and the facility panel route stopped).
+    - The finder had never been seen working: it found nothing (run 89). It now says why: the director's tables
+      are there (2 ranger cars, subtype 10; 1 ACU helicopter, subtype 0) but the game refuses orders for all of
+      them in the test park - VehicleUtils.CanVehicleBeIssuedTasks reason 2, FoundationNotOperational (the response
+      facility is probably unpowered). That refusal is the game's own rule for orders, so the radio and staff wand
+      keep it; direct control needs no working facility, so the debug drive takes any team vehicle (run 92: jeep
+      18368 -> driver's seat, Y -> gun seat). Orders through the finder are still unseen (no operational facility
+      in the test park; none built).
+    - Photo mode (run 92, scripted pad): pad d-pad RIGHT switches the jeep to photo mode (d-pad up / down / left
+      switch to the chase camera and back); pad A takes the photo (PHOTO DETAILS with SUBMIT / DISCARD), RT zooms,
+      B backs out. The mod treats photo mode as a seat (rig kind 3) on the game's Photo camera, which sits above
+      and behind the jeep. The VR controllers have no d-pad, so photo mode was out of reach in VR: in the seats the
+      dominant stick click is now d-pad right (pad RS does nothing in the driver's seat; both clicks still
+      recentre). Not seen: that mapping with controllers, the helicopter's photo switch, and whether the game
+      frames the photo by its photo camera or by the head-tracked view the player sees.
+
 2026-10-27  0.0.17  No OS-level input from the mod; debug dumps no longer stall (remote runs 85-87, headset not worn)
     - The VR laser moved the real Windows cursor (SetCursorPos) and clicked with SendInput, and holding dominant B
       while walking sent an Escape key with SendInput. On this Sophos-managed PC that is the riskiest thing the mod

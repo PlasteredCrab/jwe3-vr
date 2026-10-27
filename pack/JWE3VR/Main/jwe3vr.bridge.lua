@@ -21,7 +21,8 @@ Bridge.Btn = {PrimaryL = 1, SecondaryL = 2, PrimaryR = 4, SecondaryR = 8, ClickL
 Bridge.Cfg = {OverviewScale = 1, HorizonLock = 2, GunnerAimGain = 3, SteeringWheel = 4, HideHudImmersive = 5, LeftHanded = 6, SnapTurnDeg = 7, Seated = 8}
 
 local Op = {Status = 0, Tick = 1, Hand = 2, Controls = 3, Flags = 4, Pad = 5, Haptic = 6, Mouse = 7, Key = 8, Config = 9,
-            Recenter = 10, Wheel = 11, HandLocal = 12, Log = 13, PlaceScreen = 14, HudStatus = 15, Pointer = 16}
+            Recenter = 10, Wheel = 11, HandLocal = 12, Log = 13, PlaceScreen = 14, HudStatus = 15, Pointer = 16,
+            DebugCommand = 18}
 local kProtocol = 1
 local kPath = ".\\Win64\\ovldata\\JWE3VR\\JWE3VR.dll"
 
@@ -157,6 +158,13 @@ end
 Bridge.M = {HooksInstalled = 100, EnvLoaderPatched = 101, ManagerAdded = 102, CameraPatched = 103,
             DrivePatched = 104, GunnerPatched = 105, ManagerInit = 106, CameraKind = 107, GameplayInit = 108,
             LuaError = 109}
+
+-- A debug command from the DLL (JWE3VR_drive.req), consumed when read: 0 none, 1 drive the nearest ranger jeep,
+-- 2 the nearest ACU helicopter.
+Bridge.DebugCommand = function()
+    if not vr then return 0 end
+    return vr(Op.DebugCommand) or 0
+end
 
 Bridge.PlaceScreen = function()
     if vr then vr(Op.PlaceScreen) end
