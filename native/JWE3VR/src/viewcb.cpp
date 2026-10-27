@@ -71,11 +71,12 @@ static Vec3 g_lastRunPos;
 static bool g_haveLastRun = false;
 
 // Recording root CBVs costs a lock per bind on every game render thread, so it only runs while it is
-// needed: until the view CB has been found (discovery), in sync mode, or while dumping markers.
+// needed: until the view CB has been found (discovery), or in sync mode. Not for MarkerDump (OnMarker logs the
+// markers on its own): a MarkerDump = 1 left in a test install kept this running all session long, after
+// discovery had given up (0.0.22).
 static bool Active() {
     const Settings& c = config::Get();
     if (!c.enabled) return false;
-    if (c.markerDump) return true;
     if (g_unreachable.load()) return false;
     return c.stereo == StereoMode::Sync || (c.syncDiscovery && g_posRow < 0) ||
            (c.stereo == StereoMode::AER && c.perEyeTaa); // per-eye TAA patches the previous-camera row

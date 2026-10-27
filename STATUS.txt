@@ -1,6 +1,20 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.22  A test leftover kept view-CB discovery running; soak test (runs 97-98, headset not worn)
+    - The installed JWE3VR.ini still had MarkerDump = 1 from early marker work (the shipped default is 0; no other
+      setting differed). MarkerDump made view-CB discovery count as needed, so root-CBV recording (a lock on every
+      constant-buffer bind on the game's render threads), a scan every 30th frame and its log line kept running all
+      session, long after discovery had given up - in every test since. JWE3 emits no pass markers, so the dump
+      itself logged nothing. Fixed twice: the ini is back to 0, and MarkerDump no longer keeps the CB recording on
+      (OnMarker logs markers on its own). Run 98: discovery gives up ~6 min into the park and no discovery line
+      follows. Earlier remote fps numbers carried this extra work, but they are dominated by remote desktop.
+    - Soak, run 97: 18 minutes in the park overview with the VR view on. Private memory 6,498-6,500 MB and working
+      set 3,582-3,583 MB across the last 8 minutes (about 1,000 frames at the remote frame rate), handles and threads
+      steady, no warnings beyond the two startup notes (swapchain queue, discovery); the log grows by about 15 lines
+      a minute (frame statistics every 10 s, foveation and HUD counts every minute). Not soaked: vehicles, walking,
+      a real headset frame rate.
+
 2026-10-27  0.0.21  The pause menu goes to the in-world HUD panel (run 96, headset not worn)
     - With the VR view on in the park, pad START: the game's OPTIONS menu (RESUME, SAVE, LOAD, SETTINGS, EXIT TO
       MAIN MENU, QUIT GAME, on its dark full-screen backdrop) was drawn into the HUD texture, and the eye frame
