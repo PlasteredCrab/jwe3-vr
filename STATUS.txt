@@ -1,6 +1,19 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.19  Regression run of a park reload; the helicopter has no photo mode; headset checklist (runs 93-94)
+    - Run 93 (reload.sh, everything since 0.0.13 in): second park's VR manager Init 9 s after CONTINUE, rig on the
+      frame ("camera tick: mode Standard, VR override 1.0"), the second park's two UI textures learned, eyes free of
+      UI and the toolbar / bottom bar in the HUD texture. The camera manager module stays patched across parks (one
+      "driven via module patch" line for both).
+    - Run 94 (same session, drive.sh heli): the debug drive took the second park's ACU helicopter, the seat camera
+      was asked for and given. No pad button switched it to photo mode (d-pad right, up, down, left, BACK, both
+      stick clicks; on the ground and after RT): the game allows photo mode only for a vehicle with a
+      "./PhotoCamera" entity (VehicleUtils.CanSwitchToPhoto), which the capture helicopter apparently lacks. The
+      README's photo row now says jeep only.
+    - README "First headset test" extended with the jeep, gun seat, photo mode, helicopter and walking steps and
+      their log lines (step 2's log line was out of date).
+
 2026-10-27  0.0.18  Photo mode; the team-vehicle finder checked; seats reached without clicks (runs 88-92)
     - New debug request JWE3VR_drive.req ("jeep" / "heli", bridge op 18): the Lua side takes control of the team
       vehicle nearest the camera, found by Vehicles.FindNearestTeam (the radio's and staff wand's finder), entered

@@ -92,7 +92,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Park overview | Both grips | Scale and rotate the park |
 | Park overview | Off-hand stick | Glide over the park |
 | Park overview | Dominant A on a vehicle | Take control of it |
-| Park overview | Dominant B on a spot | Nearest ranger team opens the order screen (hold off-hand grip: ACU helicopter); point at the target and pull the trigger |
+| Park overview | Dominant B on a spot | Nearest ranger team opens the order screen (hold off-hand grip: ACU helicopter); point at the target and pull the trigger. A long weak buzz: no team can take orders (the game refuses them while their facility is not operational, e.g. without power) |
 | Walking | Left stick | Walk where you look |
 | Walking | Right stick | Snap turn (30 degrees; smooth with `SnapTurnDeg = 0`) |
 | Walking | Tap dominant B | Cycle tool: empty hands, dart rifle, medicine gun, radio (stronger pulse per step) |
@@ -110,7 +110,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3; the helicopter only once it is in the air) |
 | Jeep / helicopter seat, gun seat | Dominant B | The game's Back (pad B): gun seat to driver's seat, then out of the vehicle |
 | Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
-| Jeep / helicopter seat | Dominant stick click | Photo mode (the game's pad d-pad right; seen on the jeep's pad, the helicopter not tried) |
+| Jeep seat | Dominant stick click | Photo mode (the game's pad d-pad right; the capture helicopter has no photo mode) |
 | Photo mode | Dominant A | Take the photo (pad A); the game then shows the photo's details to submit or discard |
 | Photo mode | Dominant B | Back (pad B) |
 | Gun seat | Dominant hand | Aim (the gun follows it) |
@@ -196,15 +196,16 @@ game folder. ACSE is not required.
 
 ## First headset test
 
-None of this has been seen in a worn headset yet. Go through it in order; each step names the line in
+None of this has been seen in a worn headset yet (remote runs without the headset have seen the log lines of
+steps 2, 4 and 8-12, and the rig on the rendered frame). Go through it in order; each step names the line in
 `Win64\ovldata\JWE3VR\JWE3VR.log` that says it works. When a step fails, note which one and keep the log.
 
 1. **Main menu:** the menu is a large flat screen in front of you and the game window keeps working. Log:
    "swapchains 1920x1080 format 24" and, every 10 s, "frames: ... OpenXR state 5" (5 = focused; 3 means the
    headset is not being worn or the runtime is not showing the game).
 2. **Park, head tracking:** load the Sandbox park. You look down on the park as a 1:30 model. Turning and leaning
-   move the view one to one, with no lag or swimming and the horizon level. Log: "camera tick (manager path): mode
-   Standard, VR override 1.0".
+   move the view one to one, with no lag or swimming and the horizon level. Log: "camera: driven from the camera
+   manager's own Advance" and "camera tick: mode Standard, VR override 1.0".
 3. **Stereo depth:** close one eye, then the other: the two views must differ, and near things must look near. If
    the depth looks inside-out, doubled or a frame late, try `AERPresentLag` 0, 1 or 2, or flip `SwapEyes` (the ini
    reloads live).
@@ -217,6 +218,20 @@ None of this has been seen in a worn headset yet. Go through it in order; each s
 6. **Tablet and recentre:** off-hand B/Y brings up the game screen with its HUD in front of you and hides it again;
    clicking both thumbsticks recentres.
 7. **Frame rate:** the "frames: ... fps" line should be near the headset's refresh rate (72, 80 or 90).
+8. **Jeep:** point at a ranger jeep and press dominant A (or use the response facility's DIRECT CONTROL). You sit
+   in the driver's seat at the game's own seat camera and look around with your head; the triggers drive, the left
+   stick steers, both grips make a steering wheel. Log: "camera mode FirstPersonVehicle (rig kind 3".
+9. **Gun seat:** off-hand Y. You sit at the gun mount with the gunner's own body hidden; the gun follows your hand
+   and the trigger fires. Log: "character model ... hidden in the gun seat". Dominant B goes back to the driver's
+   seat ("shown again").
+10. **Photo mode:** in the jeep's driver's seat, click the dominant stick; dominant A takes the photo, then the game shows
+    its details to submit or discard. Log: "ui mode photo in". Check that the photo shows what you were looking at.
+11. **Helicopter:** take control of the capture helicopter. You are put in its seat (log: "asked for the
+    first-person camera on vehicle ... try 1"), the right trigger lifts off, and off-hand Y in the air goes to its
+    gun seat.
+12. **Walking:** in the park, the left toolbar's FIRST PERSON VIEW button (a person with a camera), then a spot on
+    the ground. You stand there at your real height; the left stick walks where you look, the dominant stick turns.
+    Hold dominant B to leave. Log: "camera mode Guest (rig kind 2".
 
 ## Settings (`Win64\ovldata\JWE3VR\JWE3VR.ini`, saved changes apply live)
 
