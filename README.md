@@ -14,7 +14,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > capture helicopter puts you in its seat in first person, the gun seat puts you at the gun mount (the gunner's
 > own model hidden), and the
 > virtual Xbox pad reaches the game (a scripted pad drove the jeep, lifted the helicopter off and entered both gun seats).
-> The guest view (walking) puts the rig on the frame too, and a scripted stick walked it. Not yet seen: head motion
+> The guest view (walking) puts the rig on the frame too, and a scripted stick walked it; photo mode works from
+> the jeep, the pause menu lands on the HUD panel, and leaving a park and loading it again works. Not yet seen: head motion
 > and stereo depth in a worn headset, the HUD panel itself in the headset, the VR controllers (so neither
 > head-yaw steering nor the on-foot tools), and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
@@ -31,7 +32,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
   frame by replaying the frame.
 - True world scale in metres: walking and vehicles are 1:1, the park overview is a 1:30 model you can grab,
   scale and rotate.
-- Menus, loading screens and cutscenes on a large flat screen in front of you.
+- The main menu, loading screens and cutscenes on a large flat screen in front of you; in a park the pause menu
+  is on the HUD panel.
 - Vehicles in first person: jeeps start in the driver's seat, and helicopters (third-person only in JWE3) are
   switched to their own seat camera, so you sit in the vehicle instead of floating behind it.
 - In-world HUD: the game's UI is drawn as a floating panel below eye level that follows you lazily, instead of
@@ -59,6 +61,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Gun seats (jeep and helicopter): the dart, medicine and camera guns follow your hand; the trigger fires; the
   game's own ammo switch keeps the HUD right. The gunner character (who stands where your eyes are) is hidden while
   you are in the seat and comes back on the flat screen.
+- Photo mode from the jeep: click the stick, and A takes the photo (the capture helicopter has no photo mode).
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
   ranger team or ACU helicopter into the game's own order screen.
 - On-foot ranger: while walking, carry a dart rifle, a medicine gun or a radio. Darts count toward the game's
@@ -74,6 +77,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - The Lua bridge checks the game's Lua stack layout on every call and does nothing if it doesn't match, so a game
   update turns VR off instead of crashing.
 - No game files are patched; the exe is never modified.
+- No OS-level input: the laser's cursor and clicks are messages to the game's own window (your mouse cursor is
+  never moved, nothing reaches other windows), and the controllers reach the game as a virtual Xbox pad.
 
 ## Controls
 
@@ -259,8 +264,9 @@ The file is written with comments on first run. The ones you are most likely to 
   (with `-NoProxy` the game's Lua loads it at startup: look for "bridge: first call from Lua").
 - **3D looks wrong (inside-out, doubled, one eye a frame late):** set `AERPresentLag` to 0, 1 or 2, or flip `SwapEyes`.
 - **Camera does not follow the head:** the Lua side reports into `JWE3VR.log` (lines starting `lua:`). Expect
-  "hooks installed", "VR manager Init (park loaded)", "gameplay init done", then "camera tick (manager path): ...
-  VR override 1.0" and "camera: driven from the camera manager's own Advance". Without that last line the game's
+  "hooks installed", "VR manager Init (park loaded)", "gameplay init done", then "camera tick: mode Standard,
+  VR override 1.0" and "camera: driven from the camera manager's own Advance" (logged early, marked "before the
+  bridge loaded"). Without that last line the game's
   camera overwrites the rig every frame and only the FOV changes. "bridge: unexpected Lua stack layout" means a game
   update changed the Lua layout.
 - **Vehicles ignore the controllers:** JWE3 adopts a pad only after it sees a keystroke from it; look for "virtual
@@ -313,7 +319,7 @@ The file is written with comments on first run. The ones you are most likely to 
 | `native/JWE3VR/test` | Offline checks (rig math; the bridge against a fake `lua_State`) |
 | `pack/JWE3VR` | Content pack: own module hooks, camera wrap, gameplay, on-foot ranger, staff wand |
 | `re/tools` | `survey.py` (Phase 0 binary survey), strings / LEA scan / Lua binding map / refs / disassembly, Lua decompile, `luagrep.py` (search extracted Lua) |
-| `re/remote` | Remote test runs without a person at the PC: deploy, launch, click into a park, screenshots, logs |
+| `re/remote` | Remote test runs without a person at the PC: deploy, launch, click into a park, vehicles (`vehicle.sh`, `drive.sh`), walking (`guest.sh`), park reload (`reload.sh`), HUD and frame screenshots, logs |
 | `re/ghidra.ps1`, `re/ghidra_scripts` | Headless Ghidra: import with the Denuvo blob removed, decompile `re/targets.txt` |
 | `third_party/fetch.ps1` | Fetches MinHook, the OpenXR loader SDK and the Lua 5.3 source |
 
