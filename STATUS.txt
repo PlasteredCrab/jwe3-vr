@@ -1,6 +1,16 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.23  Review of this session's control changes: one fix (not testable without controllers)
+    - Leaving the walking view by holding dominant B sends the game's pad B as a pulse of at least 0.25 s and
+      3 ticks (0.0.17). The pulse only counted down while walking, and the game leaves the guest view on its
+      first frames, so the rest of it was kept and would have pressed B - and left again - the next time you
+      entered the guest view. It is now cleared whenever the view is not walking.
+    - Read through and found right: the photo-mode stick click (both clicks still recentre and send no stick
+      click to the game), the gunner model (shown again whenever the VR view stops), the FOV restore (only when
+      the rig stops writing), the posted laser mouse (a release always goes out when the laser stops pointing),
+      the drive request (consumed once).
+
 2026-10-27  0.0.22  A test leftover kept view-CB discovery running; soak test (runs 97-98, headset not worn)
     - The installed JWE3VR.ini still had MarkerDump = 1 from early marker work (the shipped default is 0; no other
       setting differed). MarkerDump made view-CB discovery count as needed, so root-CBV recording (a lock on every

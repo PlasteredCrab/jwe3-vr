@@ -319,6 +319,9 @@ Gameplay.Advance = function(_nDt)
 
     local nKind = Camera.nKind
     local bImmersive = nKind == K.Overview or nKind == K.Ground or nKind == K.Seat or nKind == K.Gunner
+    -- The pad-B pulse that leaves walking ends with walking: the game leaves the guest view on the pulse's first
+    -- frames, and what was left of it must not press B the next time you walk.
+    if nKind ~= K.Ground then Gameplay.nBackPulse, Gameplay.nBackTicks = 0, 0 end
 
     -- Tablet: off-hand B/Y shows the flat game screen (with its HUD) in front of you. In a vehicle the off-hand
     -- grip must be held too: there plain off-hand Y is pad Y, the game's Aim Mode (JWE3: into the gun seat).
