@@ -1,6 +1,16 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.25  Audit of per-frame warnings and errors (run 101)
+    - Every LOGW / LOGE in the DLL checked for whether its condition can repeat every frame. OpenXR init, the
+      eye swapchains, the HUD swapchain and the foveation image already fail once (guarded or remembered); the
+      OpenXR calls are rate-limited since 0.0.24. One gap: the in-world HUD's own UI texture was tried again every
+      frame after a failed creation (out of video memory, say), logging each time. A size and format that failed
+      is now remembered and not retried; the message says the UI then stays on the eyes. On the Lua side a failing
+      gameplay or camera tick is already logged once.
+    - Run 101: the HUD path works as before (both UI textures learned, toolbar and bottom bar in the HUD texture,
+      eyes clear), no errors.
+
 2026-10-27  0.0.24  What only runs once the headset is worn; OpenXR errors rate-limited (run 100)
     - Every run so far sat in OpenXR state 3 (headset not on the head). The copies into the headset's images (eyes,
       flat screen, HUD panel, laser dot) run in that state too and have been seen working; only the layer list

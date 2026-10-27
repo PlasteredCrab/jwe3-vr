@@ -361,6 +361,10 @@ static DXGI_FORMAT SrgbOf(DXGI_FORMAT f) {
     }
 }
 
+// A size and format the UI texture could not be created in: not retried every frame (each try would log again).
+static UINT g_uiFailW = 0, g_uiFailH = 0;
+static DXGI_FORMAT g_uiFailFormat = DXGI_FORMAT_UNKNOWN;
+
 static void EnsureUiTexture(const FrameInfo& f) {
     const Settings& c = config::Get();
     if (!c.worldHud || !f.width) return;
@@ -372,11 +376,16 @@ static void EnsureUiTexture(const FrameInfo& f) {
     UINT w = g_uiWantW.load() ? g_uiWantW.load() : f.width, h = g_uiWantH.load() ? g_uiWantH.load() : f.height;
     const UiTex* cur = g_uiTex.load();
     if (cur && cur->w == w && cur->h == h && cur->format == want) return;
+    if (w == g_uiFailW && h == g_uiFailH && want == g_uiFailFormat) return;
     ID3D12Device* dev = render::Device();
     if (!dev) return;
     ID3D12DescriptorHeap* heap = nullptr;
     D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2};
-    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&heap)))) return;
+    if (FAILED(dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&heap)))) {
+        LOGE("in-world HUD: descriptor heap creation failed");
+        g_uiFailW = w, g_uiFailH = h, g_uiFailFormat = want;
+        return;
+    }
     UINT inc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     g_rtvIncrement = inc;
     D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
@@ -392,7 +401,8 @@ static void EnsureUiTexture(const FrameInfo& f) {
     D3D12_CLEAR_VALUE cv{UnormOf(want), {0, 0, 0, 0}};
     ID3D12Resource* tex = nullptr;
     if (FAILED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&tex)))) {
-        LOGE("in-world HUD: UI texture creation failed (format %d)", (int)want);
+        LOGE("in-world HUD: UI texture creation failed (format %d, %ux%u); the UI stays on the eyes", (int)want, w, h);
+        g_uiFailW = w, g_uiFailH = h, g_uiFailFormat = want;
         heap->Release();
         return;
     }
