@@ -109,6 +109,7 @@ local SetUIMode = function(sTag, bOn, self)
         Gameplay.sUIMode = sTag
         Gameplay.oUIMode = self
         if sTag == "gunner" then Gameplay.nAimLogs, Gameplay.bFireLogged, Gameplay.bGameFireLogged = 0, false, false end
+        if sTag == "drive" then Gameplay.bWheelLogged = false end
     elseif Gameplay.sUIMode == sTag then
         Gameplay.sUIMode = nil
         Gameplay.oUIMode = nil
@@ -447,6 +448,10 @@ Gameplay.Advance = function(_nDt, _nGameDt)
             if bValid == 1 then
                 nMask = nMask + Ov.LX
                 lx = Clamp(nAngle / (math.pi * 0.5), -1, 1)
+                if not Gameplay.bWheelLogged and math.abs(nAngle) > 0.17 then
+                    Gameplay.bWheelLogged = true -- once per drive: the hands steer
+                    Bridge.Text(global.string.format("steering wheel: hands turned %.0f deg, steering %.2f", nAngle * 57.3, lx))
+                end
             end
         end
         -- Buttons as mapped natively, but the grips held for the wheel are not LB / RB (JWE3: LB opens the site

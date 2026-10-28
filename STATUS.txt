@@ -1,6 +1,13 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.33  Steering wheel on scripted input (run 122)
+    - In the jeep, both grips held with the hands level, then the right hand 20 cm lower than the left: "steering
+      wheel: hands turned 28 deg, steering 0.31" (atan(0.2/0.4) = 27 deg; the stick is the angle over 90 deg). A
+      burst of gas with the wheel held rolled the jeep a little (the parking markings shifted); at the remote frame
+      rate 2.5 s of gas is well under a second of game time, too little to judge the turn. New log line, once per
+      drive: "steering wheel: hands turned ... deg".
+
 2026-10-27  0.0.32  Grabbing the park model on scripted input (run 121)
     - New VR script steps L=x,y,z / R=x,y,z put a hand at an offset from the head, so grabs can be played.
     - One grip held while the right hand moved 60 cm toward the body: the park slid toward the viewer (the
