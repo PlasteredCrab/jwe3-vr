@@ -616,9 +616,9 @@ static void OnPresent(IDXGISwapChain* sc) {
                 fclose(f);
             }
             DeleteFileW(driveReq.c_str());
-            int command = strncmp(text, "heli", 4) == 0 ? 2 : 1;
+            int command = strncmp(text, "heli", 4) == 0 ? 2 : strncmp(text, "paths", 5) == 0 ? 3 : 1;
             g_debugCommand = command;
-            LOGI("debug: drive request (%s) passed to Lua", command == 2 ? "helicopter" : "jeep");
+            LOGI("debug: request (%s) passed to Lua", command == 3 ? "path report" : command == 2 ? "helicopter" : "jeep");
         }
         // JWE3VR_rt.req: log the render targets of a frame and save each large one (finding the UI target).
         std::wstring rtReq = ModuleDir() + L"JWE3VR_rt.req";

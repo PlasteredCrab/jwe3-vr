@@ -67,7 +67,10 @@ static BYTE Trig(float v) { return (BYTE)std::clamp(v * 255.f, 0.f, 255.f); }
 //   <actions> <ms>    actions joined with '+', held for <ms>:
 //     pad 0 buttons     A B X Y START BACK UP DOWN LEFT RIGHT LB RB LS RS LT RT, sticks LX=/LY=/RX=/RY= -1..1
 //     window messages   K=ENTER|ESC|UP|DOWN|LEFT|RIGHT|SPACE|TAB|BACK|0xNN (key down at the start, up at the end),
-//                       CLICK=x,y (left click at x,y as fractions of the client area, down then up)
+//                       CLICK=x,y (left click at x,y as fractions of the client area, down then up),
+//                       MOVE=x,y (the cursor only: the game takes a press at the cursor position of an earlier frame,
+//                       so MOVE there, wait a few frames, then CLICK lands exactly; a bare CLICK at slow frame rates
+//                       pressed where the cursor was before)
 //     FOCUS             post the window-activation messages (the game ignores input while it thinks it is
 //                       in the background; real focus is not changed)
 //     LASER=x,y         the VR laser's own mouse path: cursor to x,y (fractions), left press at the start and
@@ -81,6 +84,7 @@ struct PadStep {
     XINPUT_GAMEPAD pad{};
     std::vector<WPARAM> keys;
     float clickX = -1, clickY = -1;
+    float moveX = -1, moveY = -1;
     float laserX = -1, laserY = -1;
     bool focus = false;
     ULONGLONG ms = 0;
@@ -128,6 +132,7 @@ static bool ParsePadStep(const std::string& line, PadStep& s) {
         if (sscanf_s(t.c_str(), "RY=%f", &v) == 1) s.pad.sThumbRY = Axis(v), known = true;
         if (sscanf_s(t.c_str(), "CLICK=%f,%f", &v, &w) == 2) s.clickX = v, s.clickY = w, known = true;
         if (sscanf_s(t.c_str(), "LASER=%f,%f", &v, &w) == 2) s.laserX = v, s.laserY = w, known = true;
+        if (sscanf_s(t.c_str(), "MOVE=%f,%f", &v, &w) == 2) s.moveX = v, s.moveY = w, known = true;
         if (t == "FOCUS") s.focus = true, known = true;
         if (!known) return false;
     }
@@ -161,6 +166,7 @@ static void StepMessages(const PadStep& s, bool start) {
         PostMessageW(g_hwnd, WM_SETFOCUS, 0, 0);
     }
     for (WPARAM vk : s.keys) PostMessageW(g_hwnd, start ? WM_KEYDOWN : WM_KEYUP, vk, KeyLParam(vk, !start));
+    if (start && s.moveX >= 0) PostMessageW(g_hwnd, WM_MOUSEMOVE, 0, ClientPoint(s.moveX, s.moveY));
     if (s.clickX >= 0) {
         LPARAM pt = ClientPoint(s.clickX, s.clickY);
         if (start) {

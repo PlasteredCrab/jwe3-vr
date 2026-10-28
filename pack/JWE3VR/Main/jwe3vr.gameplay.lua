@@ -296,6 +296,66 @@ Gameplay.DebugDrive = function(bHelicopter)
     return true
 end
 
+-- Debug (JWE3VR_drive.req "paths"): for the response facility (the spawn point of the nearest ranger jeep) and every
+-- arrival building, whether the game counts its required path connections as made, and where on the flat screen the
+-- points 5.6 m off each side of it are (u,v from the top left) - to aim the path tool at a join point remotely.
+Gameplay.DebugPaths = function()
+    local tWorld = api.world.GetWorldAPIs()
+    local civ = tWorld.civileng
+    local camID = api.camera.GetMainCameraID()
+    local cam = api.transform.GetTransform(camID)
+    local bFov, vFov = pcall(api.camera.GetFOV, camID)
+    local nFovY, nAspect = 1.0, 16 / 9
+    -- api.camera.GetFOV returns a 2D vector (horizontal, vertical radians); read it by its text if need be.
+    local sx, sy = global.string.match(tostring(vFov), "%(([%d%.%-]+),([%d%.%-]+)%)")
+    if bFov and sx then
+        local nX, nY = global.tonumber(sx), global.tonumber(sy)
+        if nX and nY and nX > 0 and nY > 0 then nFovY, nAspect = nY, math.tan(nX * 0.5) / math.tan(nY * 0.5) end
+    elseif bFov and global.type(vFov) == "number" then
+        nFovY = vFov
+    end
+    Bridge.Text("paths: camera FOV " .. tostring(vFov) .. " -> fovY " .. global.string.format("%.3f", nFovY))
+    local cp, cR, cU, cF = cam:GetPos(), cam:GetR(), cam:GetU(), cam:GetF()
+    local Screen = function(v)
+        local dx, dy, dz = v:GetX() - cp:GetX(), v:GetY() - cp:GetY(), v:GetZ() - cp:GetZ()
+        local x = dx * cR:GetX() + dy * cR:GetY() + dz * cR:GetZ()
+        local y = dx * cU:GetX() + dy * cU:GetY() + dz * cU:GetZ()
+        local z = dx * cF:GetX() + dy * cF:GetY() + dz * cF:GetZ()
+        if z <= 0.1 then return "behind" end
+        local t = math.tan(nFovY * 0.5)
+        return global.string.format("%.3f,%.3f", 0.5 + 0.5 * x / (z * t * nAspect), 0.5 - 0.5 * y / (z * t))
+    end
+    local Report = function(sWhat, nEntity, d)
+        local t = nEntity and api.transform.GetTransform(nEntity)
+        if not t then
+            Bridge.Text("paths: " .. sWhat .. " " .. tostring(nEntity) .. ": no transform")
+            return
+        end
+        local bOk, bHas = pcall(civ.HasRequiredPathConnections, civ, nEntity)
+        local bOk2, bOper = pcall(civ.IsFoundationOperational, civ, nEntity)
+        local p, R, F = t:GetPos(), t:GetR(), t:GetF()
+        local At = function(r, f) return Vector3:new(p:GetX() + R:GetX() * r + F:GetX() * f, p:GetY(), p:GetZ() + R:GetZ() * r + F:GetZ() * f) end
+        Bridge.Text("paths: " .. sWhat .. " " .. tostring(nEntity) .. " paths connected " .. tostring(bOk and bHas) .. ", operational " ..
+                    tostring(bOk2 and bOper) .. "; screen centre " .. Screen(p) .. ", at " .. d .. " m: +F " .. Screen(At(0, d)) .. ", -F " ..
+                    Screen(At(0, -d)) .. ", +R " .. Screen(At(d, 0)) .. ", -R " .. Screen(At(-d, 0)))
+    end
+    local veh = Vehicles.FindNearestTeam(cp, false, true)
+    local bSp, nFacility = pcall(tWorld.vehicles.GetSpawnPoint, tWorld.vehicles, veh)
+    Report("response facility", bSp and nFacility or nil, 5.6)
+    for _, sApi in global.ipairs({"park", "buildings", "building"}) do
+        local o = tWorld[sApi]
+        if o and o.GetAllArrivalBuildings then
+            local bA, tAll = pcall(o.GetAllArrivalBuildings, o)
+            if bA and global.type(tAll) == "table" then
+                for k, v in global.pairs(tAll) do
+                    Report("arrival building", global.type(v) == "number" and v or (global.type(k) == "number" and k or nil), 3.6275)
+                end
+            end
+            break
+        end
+    end
+end
+
 Gameplay.SendTeam = function(bHelicopter)
     local entity, vPos = Gameplay.EntityUnderLaser()
     if not vPos or not Gameplay.iUIMode then
@@ -329,6 +389,9 @@ Gameplay.Advance = function(_nDt, _nGameDt)
     if nDebug == 1 or nDebug == 2 then
         local bOk, sErr = pcall(Gameplay.DebugDrive, nDebug == 2)
         if not bOk then Bridge.Text("debug drive failed: " .. tostring(sErr)) end
+    elseif nDebug == 3 then
+        local bOk, sErr = pcall(Gameplay.DebugPaths)
+        if not bOk then Bridge.Text("debug paths failed: " .. tostring(sErr)) end
     end
     local tl, tr, gl, gr, sxl, syl, sxr, syr, nBits, nNow = Bridge.Controls()
     -- Hold and pulse timers run on the wall clock: the game's time step is clamped to 1/15 s on slow frames and

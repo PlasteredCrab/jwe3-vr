@@ -1,6 +1,22 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.36  Remote building tooling; the Sandbox park's paths (runs 128-132)
+    - Pad scripts: new MOVE=x,y step (cursor only). The game takes a press at the cursor position of an earlier frame
+      (the same as the laser, 0.0.30), so a bare CLICK at the remote 2-4 fps pressed where the cursor had been -
+      the cause of the earlier placements that needed two clicks or landed in the wrong place. MOVE, wait, CLICK,
+      wait (a release elsewhere cancels a UI click) is now reliable. Keep the cursor off the screen edge: edge
+      panning moved the camera while the cursor waited on the toolbar.
+    - New debug request JWE3VR_drive.req "paths": logs, for the response facility and each arrival building,
+      civileng:HasRequiredPathConnections and IsFoundationOperational (its screen projections are still wrong - not
+      used).
+    - Path joins (from the foundation data and the path tool): each building has one aligned join point
+      (SingleAlignedJoinPoint, snap radius 2 m), shown with the path tool as a red arrow; top-down views show it.
+      The response facility now reports its paths connected; its "not operational" and "no path to arrival point"
+      remain because Arrival Point 1 still reports its paths not connected after three attempts at its entrance.
+    - The Sandbox park now holds, besides Arrival Point 1, a path loop around the facility and two branches to the
+      Arrival Point (as of the last autosave).
+
 2026-10-27  0.0.35  View constant buffer: the descriptor route is closed, the ring lead not confirmed (runs 126-127)
     - Hooked ID3D12Device::CreateConstantBufferView (diagnostic; the scan votes against those addresses too): the
       game creates no CBV descriptors after the mod has loaded (0 in a whole park session), so if it binds its view
