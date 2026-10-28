@@ -166,6 +166,26 @@ local AdaptSign = function(t, axis, nErr, nCmd)
     t[sLast] = nErr
 end
 
+-- Sight dot in the gun seats: where the gun's own aim ray meets the world (not the hand's: the gun lags the hand,
+-- and the dart goes where the gun points). The game's crosshair is part of its UI, which the in-world HUD moves onto
+-- the panel, so in the headset nothing else shows where a dart will land. Returns the point and what it is on.
+Gameplay.GunSight = function()
+    local _, gunnerID = Gameplay.GunnerIDs()
+    if not gunnerID then return nil end
+    local WeaponsAPI = api.world.GetWorldAPIs().weapons
+    local mount = WeaponsAPI:GetCameraAttachTransform(gunnerID)
+    local vAim = WeaponsAPI:GetCameraAimDirection(gunnerID)
+    if not mount or not vAim then return nil end
+    local p = mount:GetPos()
+    local vDir = Vector3:new(vAim:GetX(), vAim:GetY(), vAim:GetZ()):Normalised()
+    -- Start clear of the vehicle's own body (the mount sits inside the helicopter and the drone).
+    local vStart = Vector3:new(p:GetX(), p:GetY(), p:GetZ()) + vDir * 2
+    local physicsWorld = api.entity.FindEntityByName("MainPhysicsWorld")
+    local t = api.physics.RayCast(physicsWorld, vStart, vStart + vDir * 300, Ranger.ShotFlags(), 1)
+    if t and t[1] then return vStart + vDir * t[1].nDistance, t[1].nEntityID end
+    return nil
+end
+
 -- Debug aim (JWE3VR_drive.req "aimdino") in a gun seat: the direction from the gun mount to the nearest dinosaur,
 -- in place of the hand's, so the aim loop follows the animal (a scripted hand cannot at the remote 2-3 fps).
 Gameplay.DebugGunTarget = function(gunnerID, WeaponsAPI)
@@ -233,8 +253,14 @@ Gameplay.GunnerAim = function()
     -- Aim error now and then (at most 20 lines per gun-seat stay): a working loop shows it shrinking.
     if (Gameplay.nAimLogs or 0) < 20 and nNow - (Gameplay.nAimLogAt or -10) >= 2 then
         Gameplay.nAimLogs, Gameplay.nAimLogAt = (Gameplay.nAimLogs or 0) + 1, nNow
-        Bridge.Text(global.string.format("gun aim: hand vs gun yaw %.1f, pitch %.1f deg; stick %.2f %.2f (integral %.2f %.2f)",
-                                         nErrX * 57.3, nErrY * 57.3, nCmdX, nCmdY, t.iX, t.iY))
+        local nOn, sOn = Gameplay.nSightOn, "nothing"
+        if nOn then
+            local dinos = api.world.GetWorldAPIs().dinosaurs
+            local bOk, bDead = pcall(dinos.IsDead, dinos, nOn)
+            sOn = tostring(nOn) .. ((bOk and bDead == false) and " (dinosaur)" or "")
+        end
+        Bridge.Text(global.string.format("gun aim: hand vs gun yaw %.1f, pitch %.1f deg; stick %.2f %.2f (integral %.2f %.2f); sight on %s",
+                                         nErrX * 57.3, nErrY * 57.3, nCmdX, nCmdY, t.iX, t.iY, sOn))
     end
     return nCmdX, nCmdY, true
 end
@@ -687,6 +713,9 @@ Gameplay.Advance = function(_nDt, _nGameDt)
             nMask = nMask + Ov.RX + Ov.RY
             rx, ry = cx, cy
         end
+        local bSight, vSight, nOn = pcall(Gameplay.GunSight)
+        Bridge.Pointer(bSight and vSight or nil)
+        Gameplay.nSightOn = bSight and nOn or nil
         nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
         if bTabletChord then nButtons = nButtons & ~XI.Y end
         nMask = nMask + Ov.Buttons
@@ -719,7 +748,7 @@ Gameplay.Advance = function(_nDt, _nGameDt)
     if nMask ~= 0 then Bridge.PadOverride(nMask, lx, ly, rx, ry, 0, 0, nButtons) end
 
     -- HUD: hidden while you are in the 3D world (it would sit flat at infinity); shown on the tablet and in menus.
-    if nKind ~= K.Ground and nKind ~= K.Overview then Bridge.Pointer(nil) end
+    if nKind ~= K.Ground and nKind ~= K.Overview and nKind ~= K.Gunner then Bridge.Pointer(nil) end
     if nKind ~= K.Ground and Ranger.nTool ~= Ranger.Tool.None then Ranger.Reset() end
 
     -- HUD: with the in-world HUD the game's UI is a panel in the world, so it stays on. Without it,

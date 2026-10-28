@@ -1,6 +1,15 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.41  Sight dot in the gun seats (run 147)
+    - In the gun seats nothing in the world showed where the gun points: the game's crosshair is part of its UI,
+      which the in-world HUD moves onto the panel, and the pointer dot was off outside walking and the overview.
+      Now the dot sits where the gun's own aim ray (GetCameraAimDirection from the mount, started 2 m out to clear
+      the vehicle) meets the world - the gun's point, not the hand's, since the gun lags the hand.
+    - Run 147 (aviary drone, Tranquillize, debug aim on a Dimorphodon): the aim log now names what the sight is
+      on. Shot 1 left with the sight on the ground and hit the ground; shot 2 left just after the sight was on
+      dinosaur 19562, and hit 19562. The dot itself is an OpenXR layer (not in the flat screenshots): not seen.
+
 2026-10-28  0.0.40  A drone dart tranquillised a dinosaur; the gun-seat aim no longer settles low (runs 142-146)
     - Debug aim in gun seats: with JWE3VR_drive.req "aimdino" on, the gun seat's aim loop is steered from the gun
       mount to a dinosaur instead of the hand (it stays on the first one picked; it followed the nearest one at

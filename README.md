@@ -63,9 +63,11 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Walking (the game's first-person view): you walk where you look, at your real height.
 - Ranger jeep and helicopter: you sit in the driver's seat (the game's own first-person seat camera); the
   controllers act as an Xbox pad, and gripping with both hands turns them into a steering wheel.
-- Gun seats (jeep and helicopter): the dart, medicine and camera guns follow your hand (the gun settles within
-  about half a degree of where you point); the trigger fires; the game's own ammo switch keeps the HUD right. The gunner character (who stands where your eyes are) is hidden while
-  you are in the seat and comes back on the flat screen.
+- Gun seats (jeep, helicopter and the aviary drone's aim mode): the dart, medicine and camera guns follow your hand
+  (the gun settles within about half a degree of where you point), and a dot marks where the gun itself points
+  (the game's crosshair is on the HUD panel, not in the world); the trigger fires; the game's own ammo switch keeps
+  the HUD right. The gunner character (who stands where your eyes are) is hidden while you are in the seat and
+  comes back on the flat screen.
 - Photo mode from the jeep: click the stick, and A takes the photo (the capture helicopter has no photo mode).
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
   ranger team or ACU helicopter into the game's own order screen.
@@ -129,7 +131,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep seat | Dominant stick click | Photo mode (the game's pad d-pad right; the capture helicopter has no photo mode) |
 | Photo mode | Dominant A | Take the photo (pad A); the game then shows the photo's details to submit or discard |
 | Photo mode | Dominant B | Back (pad B) |
-| Gun seat | Dominant hand | Aim (the gun follows it) |
+| Gun seat | Dominant hand | Aim (the gun follows it; the dot shows where the gun points, which is where the dart goes) |
 | Gun seat | Dominant trigger | Fire / use the equipment (sent as the left mouse button, which is what JWE3's gun seat listens to; haptic kick) |
 | Gun seat | Off-hand stick left / right | Previous / next ammo |
 
