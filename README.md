@@ -19,10 +19,10 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > controllers in a Sandbox park built remotely (paths, response facility, hatchery, enclosure, aviary): the on-foot
 > dart rifle tranquillised a dinosaur (the game's panel: TRANQUILIZED) and the medicine gun cured one, the radio
 > called a jeep (a Fire Flare task in the game's list) and opened the team order screen, and the aviary drone flew,
-> entered its aim mode and fired. Not yet seen: head motion
+> entered its aim mode and tranquillised a Dimorphodon. Not yet seen: head motion
 > and stereo depth in a worn headset, the HUD panel itself in the headset, real VR controllers in your hands (the
-> runs above used scripted ones, and the on-foot darts were aimed at the dinosaur by a debug aid), a drone dart
-> landing on a dinosaur, and
+> runs above used scripted ones, and the darts were aimed at the dinosaur by a debug aid), a helicopter or jeep
+> dart landing on a dinosaur, and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
@@ -63,8 +63,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Walking (the game's first-person view): you walk where you look, at your real height.
 - Ranger jeep and helicopter: you sit in the driver's seat (the game's own first-person seat camera); the
   controllers act as an Xbox pad, and gripping with both hands turns them into a steering wheel.
-- Gun seats (jeep and helicopter): the dart, medicine and camera guns follow your hand; the trigger fires; the
-  game's own ammo switch keeps the HUD right. The gunner character (who stands where your eyes are) is hidden while
+- Gun seats (jeep and helicopter): the dart, medicine and camera guns follow your hand (the gun settles within
+  about half a degree of where you point); the trigger fires; the game's own ammo switch keeps the HUD right. The gunner character (who stands where your eyes are) is hidden while
   you are in the seat and comes back on the flat screen.
 - Photo mode from the jeep: click the stick, and A takes the photo (the capture helicopter has no photo mode).
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
@@ -317,8 +317,8 @@ The file is written with comments on first run. The ones you are most likely to 
   `IPDScale` the eyes' frames differ visibly: a frame for the left eye shows the scene shifted right).
   `JWE3VR_drive.req` ("jeep" or "heli") takes control of the team vehicle nearest the camera, found as the radio
   finds one; `re/remote/drive.sh <name> jeep|heli` uses it to reach a seat with no clicks. The same file with
-  "paths" logs each building's path connections and path join, "aimdino" turns the on-foot tools' aim at the nearest
-  dinosaur on or off (scripted hands cannot follow an animal), and "sick" gives the nearest dinosaur a disease
+  "paths" logs each building's path connections and path join, "aimdino" turns the on-foot tools' and gun seats'
+  aim at the nearest dinosaur on or off (scripted hands cannot follow an animal; a gun seat stays on the first one), and "sick" gives the nearest dinosaur a disease
   (one the game treats with darts) for the medicine gun. Shots and projectile impacts are logged.
 - **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
   panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`

@@ -1,6 +1,28 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.40  A drone dart tranquillised a dinosaur; the gun-seat aim no longer settles low (runs 142-146)
+    - Debug aim in gun seats: with JWE3VR_drive.req "aimdino" on, the gun seat's aim loop is steered from the gun
+      mount to a dinosaur instead of the hand (it stays on the first one picked; it followed the nearest one at
+      first and swung between animals). The scripted hand must still be tracked (an AIM step), or the loop does
+      nothing - that was why the first try logged no aim at all.
+    - Aim loop fix: the proportional command alone settled about 3 degrees low in pitch (stick -0.3 and the gun
+      not moving: the game ignores small deflections), and the drone's darts kept landing on the ground. An
+      integral term (only while the error is under ~6 degrees, capped, restarted when a sign flips) now settles
+      yaw and pitch within about 0.5 degrees, in the drone and in the helicopter gun seat. Not tried with real
+      hands; at 90 fps it integrates at the same rate per second.
+    - Aviary drone (runs 142-144, Tranquillize): darts hit Dimorphodon 19564 (the impact log: "dinosaur"); after
+      the second hit it read "conscious false", and the game's own view showed the cyan tranquillise icon over
+      it. The drone's gun cannot pitch steeply enough for a dinosaur almost straight below (error stuck at 2-6
+      degrees with the stick at -0.95); backing off with the left stick fixed that. Its reload is about 5 s:
+      trigger pulls in between do nothing.
+    - Capture helicopter (runs 145-146): taken over with "heli"; lift-off on the trigger is slow at 2 fps (0.96 m
+      to 27 m in about 25 s). The first off-hand Y in the air did nothing, the second entered the gun seat
+      (Capture Team 1, Tranquillize, gunner hidden). The aim settled within 0.5 degrees on an Archaeornithomimus
+      73 m away, the trigger fired 3 darts, and all landed on the ground or the fence; the left stick did not
+      bring the helicopter closer (the distance grew to 95 m). Not seen: a helicopter or jeep dart on a dinosaur.
+    - Unexplained: the first helicopter seat (run 145) ended by itself 16 s after the takeover, before any input.
+
 2026-10-28  0.0.39  Sandbox park finished remotely; on-foot darts, medicine, radio and the aviary drone (runs 138-141)
     - Paths: the last stretch (loop corner east, then south into the Arrival Point's north entrance) joined the
       network: the path report now gives the response facility and Arrival Point 1 "paths connected true,

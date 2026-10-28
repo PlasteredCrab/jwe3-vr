@@ -110,7 +110,10 @@ local SetUIMode = function(sTag, bOn, self)
     if bOn then
         Gameplay.sUIMode = sTag
         Gameplay.oUIMode = self
-        if sTag == "gunner" then Gameplay.nAimLogs, Gameplay.bFireLogged, Gameplay.bGameFireLogged = 0, false, false end
+        if sTag == "gunner" then
+            Gameplay.nAimLogs, Gameplay.bGameFireLogged = 0, false
+            Gameplay.tAim.iX, Gameplay.tAim.iY = 0, 0
+        end
         if sTag == "drive" then Gameplay.bWheelLogged = false end
     elseif Gameplay.sUIMode == sTag then
         Gameplay.sUIMode = nil
@@ -163,6 +166,32 @@ local AdaptSign = function(t, axis, nErr, nCmd)
     t[sLast] = nErr
 end
 
+-- Debug aim (JWE3VR_drive.req "aimdino") in a gun seat: the direction from the gun mount to the nearest dinosaur,
+-- in place of the hand's, so the aim loop follows the animal (a scripted hand cannot at the remote 2-3 fps).
+Gameplay.DebugGunTarget = function(gunnerID, WeaponsAPI)
+    local mount = WeaponsAPI:GetCameraAttachTransform(gunnerID)
+    if not mount then return nil end
+    local p = mount:GetPos()
+    local vFrom = Vector3:new(p:GetX(), p:GetY(), p:GetZ())
+    -- Stay on one dinosaur while it lives (until "aimdino" is sent again): following the nearest one swung the
+    -- gun between animals that were about as far away (run 143).
+    local dino, vDino = Gameplay.nDebugGunDino, nil
+    if dino then
+        local dinos = api.world.GetWorldAPIs().dinosaurs
+        local bOk, bDead = pcall(dinos.IsDead, dinos, dino)
+        local bP, v = pcall(api.transform.CalculateWorldPosition, dino)
+        if bOk and bDead == false and bP and v then vDino = Vector3:new(v:GetX(), v:GetY(), v:GetZ()) end
+    end
+    if not vDino then
+        local nDist
+        dino, vDino, nDist = Ranger.NearestDinosaur(vFrom)
+        if not vDino then return nil end
+        Gameplay.nDebugGunDino = dino
+        Bridge.Text(global.string.format("gun aim: debug target dinosaur %s at %.1f m", tostring(dino), nDist))
+    end
+    return (vDino + Vector3:new(0, 0.5, 0) - vFrom):Normalised()
+end
+
 Gameplay.GunnerAim = function()
     local _, gunnerID = Gameplay.GunnerIDs()
     if not gunnerID then return 0, 0, false end
@@ -174,22 +203,38 @@ Gameplay.GunnerAim = function()
     local bValid, ox, oy, oz, fx, fy, fz = Bridge.Hand(Gameplay.nDominant)
     if not frame or not vAim or bValid ~= 1 then return 0, 0, false end
     local vR, vU, vF = frame:GetR(), frame:GetU(), frame:GetF()
-    local hYaw, hPitch = Angles(Vector3:new(fx, fy, fz), vR, vU, vF)
+    local vHand = Vector3:new(fx, fy, fz)
+    if Ranger.bAimDino then vHand = Gameplay.DebugGunTarget(gunnerID, WeaponsAPI) or vHand end
+    local hYaw, hPitch = Angles(vHand, vR, vU, vF)
     local aYaw, aPitch = Angles(vAim, vR, vU, vF)
     local nErrX, nErrY = WrapPi(hYaw - aYaw), hPitch - aPitch
     local nGain = Bridge.Config(Bridge.Cfg.GunnerAimGain)
     if nGain <= 0 then nGain = 6 end
     local t = Gameplay.tAim
-    local nCmdX = Clamp(nErrX * nGain * t.signX, -1, 1)
-    local nCmdY = Clamp(nErrY * nGain * t.signY, -1, 1)
+    -- Integral term: the game ignores small stick deflections, so the proportional command alone settled about
+    -- 3 degrees low in pitch (run 142, stick -0.3 with no motion) and the drone's darts landed short. It only
+    -- integrates while the error is small (no wind-up during a big swing) and restarts when a sign flips.
+    local nNow = Gameplay.nLastNow or 0
+    local nDt = math.min(0.25, math.max(0, nNow - (t.nAt or nNow)))
+    t.nAt = nNow
+    local kI, kIMax, kISmall = 2.0, 0.35, 0.1
+    for _, s in global.ipairs({"X", "Y"}) do
+        local nErr = s == "X" and nErrX or nErrY
+        if math.abs(nErr) < kISmall and t["iSign" .. s] == t["sign" .. s] then
+            t["i" .. s] = Clamp((t["i" .. s] or 0) + nErr * kI * nDt, -kIMax, kIMax)
+        else
+            t["i" .. s], t["iSign" .. s] = 0, t["sign" .. s]
+        end
+    end
+    local nCmdX = Clamp((nErrX * nGain + t.iX) * t.signX, -1, 1)
+    local nCmdY = Clamp((nErrY * nGain + t.iY) * t.signY, -1, 1)
     AdaptSign(t, "X", nErrX, nCmdX)
     AdaptSign(t, "Y", nErrY, nCmdY)
-    -- Aim error now and then (at most 8 lines per gun-seat stay): a working loop shows it shrinking.
-    local nNow = Gameplay.nLastNow or 0
-    if (Gameplay.nAimLogs or 0) < 8 and nNow - (Gameplay.nAimLogAt or -10) >= 2 then
+    -- Aim error now and then (at most 20 lines per gun-seat stay): a working loop shows it shrinking.
+    if (Gameplay.nAimLogs or 0) < 20 and nNow - (Gameplay.nAimLogAt or -10) >= 2 then
         Gameplay.nAimLogs, Gameplay.nAimLogAt = (Gameplay.nAimLogs or 0) + 1, nNow
-        Bridge.Text(global.string.format("gun aim: hand vs gun yaw %.1f, pitch %.1f deg; stick %.2f %.2f",
-                                         nErrX * 57.3, nErrY * 57.3, nCmdX, nCmdY))
+        Bridge.Text(global.string.format("gun aim: hand vs gun yaw %.1f, pitch %.1f deg; stick %.2f %.2f (integral %.2f %.2f)",
+                                         nErrX * 57.3, nErrY * 57.3, nCmdX, nCmdY, t.iX, t.iY))
     end
     return nCmdX, nCmdY, true
 end
@@ -324,6 +369,7 @@ Gameplay.DebugDinosaur = function(bSick)
     local sDino = "nearest dinosaur " .. tostring(dino) .. (dino and global.string.format(" at %.1f m", nDist) or "")
     if not bSick then
         Ranger.bAimDino = not Ranger.bAimDino
+        Gameplay.nDebugGunDino = nil
         Bridge.Text("debug: on-foot aim at the nearest dinosaur " .. (Ranger.bAimDino and "on" or "off") .. "; " .. sDino)
         return
     end
