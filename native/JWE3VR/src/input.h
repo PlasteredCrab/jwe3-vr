@@ -18,6 +18,7 @@ struct LuaFlags {
     bool turn = false;    // right stick X turns the play space (ground walking)
     bool laser = false;   // right-hand laser drives the mouse cursor into the 3D park (overview)
     bool grab = false;    // grips move/scale/rotate the overview model
+    bool fire = false;    // gun seat: the dominant trigger is the left mouse button (JWE3's "Use Equipment")
 };
 
 bool InstallHooks();

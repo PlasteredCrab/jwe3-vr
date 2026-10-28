@@ -536,6 +536,13 @@ void OnFrame(bool screenVisible, bool hudVisible) {
     if (pointing) {
         MouseButton(0, c.trigger[dom] > 0.6f);
         MouseButton(1, c.grip[dom] > 0.8f && !f.grab);
+    } else if (f.fire) {
+        // Gun seat: JWE3 fires the gunner's equipment on the left mouse button only - pad RT does nothing there
+        // (seen in a campaign park: a posted click fired a flare, pad RT and the VR trigger did not). The cursor
+        // does not matter to it (the gun aims with the camera); put it in the middle once so a press has a point.
+        if (g_cursorPt.load() == -1) CursorToUV(0.5f, 0.5f);
+        MouseButton(0, c.trigger[dom] > 0.6f);
+        MouseButton(1, false);
     } else {
         MouseButton(0, false);
         MouseButton(1, false);

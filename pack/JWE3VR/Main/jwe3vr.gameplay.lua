@@ -437,7 +437,7 @@ Gameplay.Advance = function(_nDt, _nGameDt)
     end
     if not bImmersive then Gameplay.bTablet = false end
 
-    local nPad, bTurn, bLaser, bGrab = Bridge.Pad.Off, false, false, false
+    local nPad, bTurn, bLaser, bGrab, bFire = Bridge.Pad.Off, false, false, false, false
     local nMask, lx, ly, rx, ry, nButtons = 0, 0, 0, 0, 0, 0
 
     -- The pause menu, opened with the menu button where the pad is otherwise off (below): while the game stays
@@ -534,6 +534,7 @@ Gameplay.Advance = function(_nDt, _nGameDt)
         nMask = nMask + Ov.Buttons
     elseif nKind == K.Gunner then
         nPad = Bridge.Pad.Passthrough
+        bFire = true -- the dominant trigger fires (as the left mouse button, native side)
         local bOk, cx, cy, bValid = pcall(Gameplay.GunnerAim)
         if bOk and bValid then
             nMask = nMask + Ov.RX + Ov.RY
@@ -567,7 +568,7 @@ Gameplay.Advance = function(_nDt, _nGameDt)
     end
 
     Gameplay.bLaser = bLaser
-    Bridge.Flags(nPad, bTurn, bLaser, bGrab, Gameplay.bTablet)
+    Bridge.Flags(nPad, bTurn, bLaser, bGrab, Gameplay.bTablet, bFire and not Gameplay.bTablet)
     if nMask ~= 0 then Bridge.PadOverride(nMask, lx, ly, rx, ry, 0, 0, nButtons) end
 
     -- HUD: hidden while you are in the 3D world (it would sit flat at infinity); shown on the tablet and in menus.

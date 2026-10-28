@@ -87,9 +87,9 @@ Bridge.Controls = function()
     return vr(Op.Controls)
 end
 
-Bridge.Flags = function(nPad, bTurn, bLaser, bGrab, bTablet)
+Bridge.Flags = function(nPad, bTurn, bLaser, bGrab, bTablet, bFire)
     if not vr then return end
-    vr(Op.Flags, nPad, bTurn and 1 or 0, bLaser and 1 or 0, bGrab and 1 or 0, bTablet and 1 or 0)
+    vr(Op.Flags, nPad, bTurn and 1 or 0, bLaser and 1 or 0, bGrab and 1 or 0, bTablet and 1 or 0, bFire and 1 or 0)
 end
 
 Bridge.PadOverride = function(nMask, lx, ly, rx, ry, lt, rt, nButtons)

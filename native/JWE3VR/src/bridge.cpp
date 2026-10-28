@@ -21,7 +21,7 @@ enum Op : int {
     OpTick = 1,        // (kind, dt, pos3, R3, U3, F3) -> override, pos3, F3, U3, fovY
     OpHand = 2,        // (hand) -> valid, origin3, forward3, up3
     OpControls = 3,    // () -> trigL, trigR, gripL, gripR, sxL, syL, sxR, syR, buttonBits, seconds (wall clock)
-    OpFlags = 4,       // (padMode, turn, laser, grab, tablet)
+    OpFlags = 4,       // (padMode, turn, laser, grab, tablet, fire)
     OpPad = 5,         // (mask, lx, ly, rx, ry, lt, rt, buttons)
     OpHaptic = 6,      // (hand, amplitude, seconds, frequency)
     OpMouse = 7,       // (button, down)
@@ -199,6 +199,7 @@ static int Dispatch(uint8_t* L) {
         f.turn = s.Int(3) != 0;
         f.laser = s.Int(4) != 0;
         f.grab = s.Int(5) != 0;
+        f.fire = s.nargs >= 7 && s.Int(7) != 0;
         input::SetFlags(f);
         render::SetTabletVisible(s.Int(6) != 0);
         break;

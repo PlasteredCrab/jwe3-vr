@@ -120,7 +120,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Photo mode | Dominant A | Take the photo (pad A); the game then shows the photo's details to submit or discard |
 | Photo mode | Dominant B | Back (pad B) |
 | Gun seat | Dominant hand | Aim (the gun follows it) |
-| Gun seat | Dominant trigger | Fire (haptic kick) |
+| Gun seat | Dominant trigger | Fire / use the equipment (sent as the left mouse button, which is what JWE3's gun seat listens to; haptic kick) |
 | Gun seat | Off-hand stick left / right | Previous / next ammo |
 
 ## Phase 0 checklist
