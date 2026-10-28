@@ -1,6 +1,16 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.55  The site map takes the sticks
+    - The user's second VR View recording (E:\Videos6-10-28 13-21-32.mov, 10 min): the park from above, the
+      guest walk among Gallimimus, a T. rex and Parasaurolophus, the site map, then driving a jeep. On the map
+      (camera mode Map: the flat screen) clicks worked but the sticks did nothing: the pad was off there (no branch
+      for K.Screen). The map camera moves with the game's LeftRight / ForwardBackward controls, so on the map the
+      sticks and buttons now pass through as the pad's; the triggers are held at rest (they are the laser's mouse
+      button). Not yet run.
+    - The session ended with the user locking Windows (13:30:12, OpenXR went to SYNCHRONIZED); JWE3 was reported hung
+      at 13:32:07 and SteamVR exited at 13:32:45.
+
 2026-10-28  0.0.54  Laser clicks also as raw input; DLAA and Maximum geometry set for the user
     - SEEN WORKING (user, in the headset, 13:20): the trigger opened WORKSHOP and loaded a downloaded park, no mouse
       ("Yes, trigger only"). Log: every laser press and release was read by the game's GetRawInputData (the +1/-1

@@ -791,6 +791,14 @@ Gameplay.Advance = function(_nDt, _nGameDt)
         elseif math.abs(stickOffX) < 0.3 then
             tPrev.ammoLatch = false
         end
+    elseif nKind == K.Screen and Camera.sMode == "Map" then
+        -- The site map, on the flat screen (first headset test: "the map ... I could click in but not move around in
+        -- with analog sticks"). The map camera moves with the game's LeftRight / ForwardBackward controls, the pad's
+        -- left stick: the sticks and buttons go through as the pad's (B leaves the map); the triggers stay the
+        -- laser's mouse button, so the pad's are held at rest.
+        nPad = Bridge.Pad.Passthrough
+        nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
+        nMask = nMask + Ov.LT + Ov.RT + Ov.Buttons
     end
 
     -- The menu button reaches the game everywhere. Where the pad is otherwise off (park overview, tablet, flat
