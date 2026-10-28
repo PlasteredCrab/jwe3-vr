@@ -818,7 +818,8 @@ static void DebugScreenshot() {
 // Every 10 s: game frames per second, the OpenXR session state and the time Present spent in xrWaitFrame.
 // What each presented frame handed the headset (first headset test: the park never showed though its eye images
 // were good - were they submitted?). Counted per 10 s window with the frame rate.
-static std::atomic<unsigned> g_statProj{0}, g_statScreen{0}, g_statNoReq{0}, g_statHalfEyes{0};
+static std::atomic<unsigned> g_statProj{0}, g_statScreen{0}, g_statNoReq{0}, g_statHalfEyes{0}, g_statHud{0};
+static ULONGLONG g_autoHudDumpAt = 0;
 
 static void LogFrameStats(ULONGLONG waitMs) {
     static ULONGLONG windowStart = 0, waitTotal = 0;
@@ -835,8 +836,9 @@ static void LogFrameStats(ULONGLONG waitMs) {
              "(on backbuffer %.1f), copies into backbuffer %.1f",
              g_statSetRt.exchange(0) / n, g_statRenderPass.exchange(0) / n, g_statLegacyBbBarrier.exchange(0) / n,
              g_statBarrier7.exchange(0) / n, g_statBarrier7Bb.exchange(0) / n, g_statCopyToBb.exchange(0) / n);
-        LOGI("layers: eye images in %u frames (%u of them with only one eye ready yet), flat screen in %u, no render request "
-             "for %u", g_statProj.exchange(0), g_statHalfEyes.exchange(0), g_statScreen.exchange(0), g_statNoReq.exchange(0));
+        LOGI("layers: eye images in %u frames (%u of them with only one eye ready yet), flat screen in %u, HUD panel in %u, no "
+             "render request for %u", g_statProj.exchange(0), g_statHalfEyes.exchange(0), g_statScreen.exchange(0),
+             g_statHud.exchange(0), g_statNoReq.exchange(0));
         windowStart = now;
         frames = 0;
         waitTotal = 0;
@@ -883,6 +885,16 @@ static void OnPresent(IDXGISwapChain* sc) {
                 DebugDump(hud, D3D12_RESOURCE_STATE_RENDER_TARGET, L"JWE3VR_hud.bmp", inFlight);
             else
                 LOGW("debug: no HUD texture (WorldHud off or not immersive)");
+        }
+        if (g_autoHudDumpAt && now >= g_autoHudDumpAt) {
+            g_autoHudDumpAt = 0;
+            bool inFlight = false;
+            if (ID3D12Resource* hud = passes::PeekHudTexture()) {
+                LOGI("debug: automatic HUD texture check");
+                DebugDump(hud, D3D12_RESOURCE_STATE_RENDER_TARGET, L"JWE3VR_hud.bmp", inFlight);
+            } else {
+                LOGI("debug: automatic HUD texture check - no HUD texture");
+            }
         }
         std::wstring scanReq = ModuleDir() + L"JWE3VR_cbscan.req";
         if (GetFileAttributesW(scanReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -967,6 +979,7 @@ static void OnPresent(IDXGISwapChain* sc) {
             s_aerDump = 2;
             s_aerIndex = 0;
             LOGI("aer debug: automatic check of the eye images (alpha) 20 s into the immersive view");
+            g_autoHudDumpAt = now + 5000; // and the HUD panel's texture 5 s later (the user sees no HUD panel)
         }
     }
     if (s_aerDump == 0 && now - g_lastConfigCheck < 50) {
@@ -1056,6 +1069,7 @@ static void OnPresent(IDXGISwapChain* sc) {
             CopyToImage(hudTex, D3D12_RESOURCE_STATE_RENDER_TARGET, img);
             xr::ReleaseImage(xr::SwapId::Hud);
             layers.hud = true;
+            ++g_statHud;
             JVR_LOG_ONCE("in-world HUD active");
         }
         passes::ClearHud(); // ready for the next frame's UI (ordered after the copy on the same queue)

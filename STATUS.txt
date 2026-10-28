@@ -1,6 +1,27 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.49  Google Earth VR style park controls; why the image is so soft
+    - The user's report on 0.0.48: no HUD panel still, trigger clicks in the park did nothing, zooming with two grips
+      put the stereo out of line, and no way to fly up or down. The user wants Google Earth VR's scheme.
+    - Grab: the point of the park in the hand (one grip) or between the hands (two) now stays there in 3D - up and
+      down too, and turns and zooms pivot there. Off-hand trigger: fly toward where that controller points (new).
+      Off-hand stick: forward / back follow the gaze up and down. Two-grip zoom range 0.02-50x, by 3D hand distance.
+    - The grab's turn and zoom reached the camera one tick after its offset (computed after the basis and scale in
+      Tick); now the grab runs first. And MonoWhileMoving (new, on): while the park is being moved in the overview
+      both eyes get the same image, so the alternating eyes never disagree about where it is.
+    - Park clicks: the park laser's cursor is a far point, so tiny wrist turns moved it hundreds of pixels and presses
+      became drags in 15-170 ms (log); a quick pull there is now a click by time alone, without the pull-start
+      correction. And a successful click's answer (a building's panel) is on the HUD panel, which the user cannot see
+      - the panel was placed in view (1.42 m, 18 deg, 30 cm below the eyes) and SteamVR took the layer without errors,
+      so its content is the suspect: the HUD texture is now dumped (with alpha) automatically 25 s into the park.
+    - Soft image, from the game's Graphics.config.xml: FullScreenAAQuality = DLSS with TemporalUpscalingResolution =
+      Ratio3_2 - the game renders at 2/3 resolution and rebuilds detail from earlier frames, which in alternate-eye
+      mode belong to the other eye; and the whole frame is the 1920x1200 monitor's, spread over the headset's view
+      (other VR mods render each eye at the headset's resolution). Advice: a non-temporal anti-aliasing setting and
+      chromatic aberration off; more resolution needs a bigger game frame (DSR, or a mod-side render size override -
+      not done).
+
 2026-10-28  0.0.48  First headset test, part 5: THE PARK IN THE HEADSET; the user's control wishes
     - 0.0.47 seen working by the user: the park shows in the headset (SteamVR's OpenXR log: projection views taken,
       no format errors; eye images 8-bit sRGB (29) - SteamVR offered 29 91 2 10 24 40 55 45 20, no plain 8-bit

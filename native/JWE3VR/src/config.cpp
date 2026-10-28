@@ -28,6 +28,9 @@ AERPresentLag = 1
 SwapEyes = 0
 ; Extra degrees added to the game's culling FOV so fast head turns never reveal culled edges.
 CullMarginDeg = 3
+; Park overview: while you move the park (grab, fly, stick), both eyes get the same image, so the alternating eyes
+; never disagree about where the park is; stereo comes back when you stop. 0 keeps stereo all the time.
+MonoWhileMoving = 1
 ; Search for the main view constant buffer and log the result (needed before sync mode can work).
 SyncDiscovery = 1
 ; Sync: state of the backbuffer right after the replayed submission: rt (render target) or present.
@@ -143,6 +146,7 @@ void Load() {
     s.aerPresentLag = (int)Num(L"Stereo", L"AERPresentLag", (float)s.aerPresentLag);
     s.swapEyes = Bool(L"Stereo", L"SwapEyes", s.swapEyes);
     s.cullMarginDeg = Num(L"Stereo", L"CullMarginDeg", s.cullMarginDeg);
+    s.monoWhileMoving = Num(L"Stereo", L"MonoWhileMoving", s.monoWhileMoving ? 1.f : 0.f) != 0.f;
     s.syncDiscovery = Bool(L"Stereo", L"SyncDiscovery", s.syncDiscovery);
     s.syncCaptureRT = Str(L"Stereo", L"SyncCaptureState", "rt") != "present";
     s.forceVsyncOff = Bool(L"Stereo", L"ForceVsyncOff", s.forceVsyncOff);

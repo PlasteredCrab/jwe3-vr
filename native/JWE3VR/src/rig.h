@@ -93,6 +93,8 @@ void SetOverviewGrab(bool active, int handMask); // tabletop grab-move: bit 0 le
 void SetHasFloor(bool hasFloor);                 // false when the runtime only offers a LOCAL space
 float ViewHeading();                             // radians the view is turned right of the anchor (walking)
 void OverviewPan(float right, float forward, float dt); // stick flight over the model (-1..1)
+// Off-hand trigger in the overview: fly toward where that hand points (amount = trigger, 0..1).
+void OverviewFly(int hand, float amount, float dt);
 AnchorKind CurrentKind();
 vm::GameCamera LastCamera(float& fovY);
 float CurrentScale();

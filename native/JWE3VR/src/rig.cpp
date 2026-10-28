@@ -44,6 +44,12 @@ static Vec3 g_grabStart[2];
 static Vec3 g_grabOffsetStart;
 static float g_grabYawStart = 0.f, g_grabScaleStart = 1.f, g_grabDist = 1.f, g_grabAngle = 0.f;
 static float g_grabHandYaw0 = 0.f; // one-grip grab: the gripping hand's yaw when it closed
+// Google Earth VR style grab (first headset test, the user's wish): the point of the park under the grabbing hand
+// (one grip) or between the hands (two) stays there, in all three dimensions, while you pull, turn and zoom.
+static Vec3 g_grabWorld;            // game point under the hand / hands' midpoint when the grab began
+static Basis g_flatBasis;           // the overview anchor's level basis, before the yaw (set each tick)
+static Vec3 g_anchorPos;            // the overview anchor (the game's own camera), each tick
+static std::chrono::steady_clock::time_point g_lastMoveAt; // last time the park was moved by hand or stick
 
 static Pose Recentred(const Pose& raw) { return Compose(Inverse(g_recenter), raw); }
 
@@ -121,14 +127,26 @@ static Vec3 Relative(AnchorKind kind, Vec3 p) {
     }
 }
 
+// The overview's basis and scale for a given turn and zoom, and the game point under a real (recentred) point.
+static Basis OvBasis(float ovYaw) { return Yawed(g_flatBasis, g_yaw + ovYaw); }
+static float OvScale(float mul) { return config::Get().overviewScale * mul; }
+static Vec3 OvPoint(Vec3 offset, float ovYaw, float mul, Vec3 p) {
+    return g_anchorPos + offset + ToGame(OvBasis(ovYaw), Relative(AnchorKind::Overview, p)) * OvScale(mul);
+}
+// The offset that puts game point w under real point p for the given turn and zoom.
+static Vec3 OvOffsetFor(Vec3 w, float ovYaw, float mul, Vec3 p) {
+    return w - g_anchorPos - ToGame(OvBasis(ovYaw), Relative(AnchorKind::Overview, p)) * OvScale(mul);
+}
+
+static void MarkMoved() { g_lastMoveAt = std::chrono::steady_clock::now(); }
+
 static void UpdateGrabLocked() {
     if (!g_grab || g_kind != AnchorKind::Overview) return;
     const TrackedPose* h = g_snap.grip;
+    MarkMoved();
     if (g_grabHands == 1 || g_grabHands == 2) {
         int i = g_grabHands == 1 ? 0 : 1;
         if (!h[i].valid) return;
-        Vec3 d = h[i].pose.p - g_grabStart[i];
-        g_ovOffset = g_grabOffsetStart - ToGame(g_basis, {d.x, 0.f, d.z}) * g_scale;
         // Grab and twist (first headset test: the user asked to turn the park with one hand too): turning the
         // gripping hand left or right turns the park the same way, as the two-hand turn does. A 10 degree dead
         // zone keeps an ordinary drag from turning it.
@@ -136,18 +154,32 @@ static void UpdateGrabLocked() {
         const float dead = 10.f * kPi / 180.f;
         turn = std::fabs(turn) <= dead ? 0.f : turn - std::copysign(dead, turn);
         g_ovYaw = g_grabYawStart + turn;
+        // The grabbed point stays in the hand: pulling up or down moves you down or up, and the turn pivots there.
+        g_ovOffset = OvOffsetFor(g_grabWorld, g_ovYaw, g_ovScaleMul, h[i].pose.p);
     } else if (g_grabHands == 3 && h[0].valid && h[1].valid) {
         Vec3 a = h[0].pose.p, b = h[1].pose.p;
         Vec3 d = b - a;
-        float dist = std::max(Length({d.x, 0, d.z}), 0.05f);
+        float dist = std::max(Length(d), 0.05f);
         float angle = std::atan2(d.z, d.x);
-        g_ovScaleMul = std::clamp(g_grabScaleStart * g_grabDist / dist, 0.1f, 20.f);
-        // Hands turning one way turn the model the same way, i.e. the view the other way.
+        // Hands apart: the park grows (zoom in); together: it shrinks. Turning the hands turns it the same way.
+        g_ovScaleMul = std::clamp(g_grabScaleStart * g_grabDist / dist, 0.02f, 50.f);
         g_ovYaw = g_grabYawStart - (angle - g_grabAngle);
-        Vec3 mid = (a + b) * 0.5f, mid0 = (g_grabStart[0] + g_grabStart[1]) * 0.5f;
-        Vec3 dm = mid - mid0;
-        g_ovOffset = g_grabOffsetStart - ToGame(g_basis, {dm.x, 0.f, dm.z}) * g_scale;
+        // The point between the hands stays between them (zoom and turn pivot there, as in Google Earth VR).
+        g_ovOffset = OvOffsetFor(g_grabWorld, g_ovYaw, g_ovScaleMul, (a + b) * 0.5f);
     }
+}
+
+void OverviewFly(int hand, float amount, float dt) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (g_kind != AnchorKind::Overview || g_grab || amount <= 0.05f || hand < 0 || hand > 1) return;
+    const TrackedPose& aim = g_snap.aim[hand];
+    if (!aim.valid) return;
+    // Off-hand trigger: fly toward where that controller points, up and down included (Google Earth VR). Squared for
+    // a gentle start; a full pull is 4 m/s over the model.
+    const float realMetresPerSecond = 4.f;
+    Vec3 dir = Rotate(aim.pose.q, {0, 0, -1});
+    g_ovOffset = g_ovOffset + ToGame(g_basis, dir) * (realMetresPerSecond * amount * amount * g_scale * dt);
+    MarkMoved();
 }
 
 void OverviewPan(float right, float forward, float dt) {
@@ -167,8 +199,12 @@ void OverviewPan(float right, float forward, float dt) {
     f = Normalize(f);
     r = Normalize(r);
     float sr = right * std::fabs(right), sf = forward * std::fabs(forward);
-    Vec3 realMove = r * sr + f * sf;
+    // Forward and back follow your gaze up and down too (look down and push to sink toward the ground; the user
+    // could only move level); left and right stay level.
+    Vec3 f3 = g_snap.head.valid ? Rotate(g_snap.head.pose.q, {0, 0, -1}) : f;
+    Vec3 realMove = r * sr + f3 * sf;
     g_ovOffset = g_ovOffset + ToGame(g_basis, realMove) * (realMetresPerSecond * g_scale * dt);
+    if (std::fabs(right) > 0.15f || std::fabs(forward) > 0.15f) MarkMoved();
 }
 
 void SetHasFloor(bool hasFloor) {
@@ -194,6 +230,9 @@ void SetOverviewGrab(bool active, int hands) {
         g_grabDist = std::max(Length({d.x, 0, d.z}), 0.05f);
         g_grabAngle = std::atan2(d.z, d.x);
         if (hands == 1 || hands == 2) g_grabHandYaw0 = YawOf(g_snap.grip[hands == 1 ? 0 : 1].pose.q);
+        g_grabDist = std::max(Length(d), 0.05f);
+        Vec3 at = hands == 3 ? (g_grabStart[0] + g_grabStart[1]) * 0.5f : g_grabStart[hands == 1 ? 0 : 1];
+        g_grabWorld = OvPoint(g_ovOffset, g_ovYaw, g_ovScaleMul, at);
     }
     g_grab = active;
     g_grabHands = active ? hands : 0;
@@ -219,6 +258,13 @@ TickOutput Tick(const TickInput& in) {
 
     bool seat = in.kind == AnchorKind::Seat || in.kind == AnchorKind::Gunner;
     Basis basis = (seat && !cfg.horizonLock) ? in.anchorBasis : Flatten(in.anchorBasis, {0, 1, 0});
+    if (in.kind == AnchorKind::Overview) {
+        // The grab first, so this tick's camera uses its turn, zoom and offset together (they used to reach the
+        // camera a tick apart - the stereo looked out of line while zooming, first headset test).
+        g_flatBasis = basis;
+        g_anchorPos = in.anchorPos;
+        UpdateGrabLocked();
+    }
     if (!seat) basis = Yawed(basis, g_yaw + (in.kind == AnchorKind::Overview ? g_ovYaw : 0.f));
 
     float scale = in.kind == AnchorKind::Overview ? cfg.overviewScale * g_ovScaleMul : 1.f;
@@ -229,14 +275,16 @@ TickOutput Tick(const TickInput& in) {
     g_origin = origin;
     g_basis = basis;
     g_scale = scale;
-    UpdateGrabLocked();
     origin = g_origin = (in.kind == AnchorKind::Overview) ? in.anchorPos + g_ovOffset : origin;
 
     // Which view to render this tick.
     int eye = -1;
     Pose local = g_snap.head.pose;
     Pose stage = g_raw.rawHead;
-    if (cfg.stereo == StereoMode::AER && g_snap.eye[0].valid && g_snap.eye[1].valid) {
+    // Moving the park in the overview: both eyes get the same image (see MonoWhileMoving).
+    bool movingPark = in.kind == AnchorKind::Overview && cfg.monoWhileMoving &&
+                      (g_grab || std::chrono::steady_clock::now() - g_lastMoveAt < std::chrono::milliseconds(150));
+    if (cfg.stereo == StereoMode::AER && g_snap.eye[0].valid && g_snap.eye[1].valid && !movingPark) {
         eye = (int)(g_tick & 1) ^ (cfg.swapEyes ? 1 : 0);
         Pose e = g_snap.eye[eye].pose;
         e.p = local.p + (e.p - local.p) * cfg.ipdScale;

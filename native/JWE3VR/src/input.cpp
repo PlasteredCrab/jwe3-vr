@@ -68,6 +68,10 @@ static std::atomic<ULONGLONG> g_pressAt{0};
 static LPARAM g_touchPt = -1;
 static ULONGLONG g_touchAt = 0;
 static bool g_trigTouched = false;
+// The cursor is the far point of the park laser (overview, not on the HUD panel): there a tiny turn of the wrist moves
+// it hundreds of pixels, so a quick pull is a click by time alone (first headset test: park presses became drags
+// within 15 ms) and the pull-start correction is not used.
+static std::atomic<bool> g_cursorFromPark{false};
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -464,7 +468,8 @@ void MouseButton(int button, bool down) {
     if (down && g_cursorPt.load() == -1) return; // no laser point yet
     if (down && !g_mouseDown[0] && !g_mouseDown[1]) {
         // Press where the trigger pull began (see g_touchPt), when that was recent.
-        if (button == 0 && g_touchPt != -1 && GetTickCount64() - g_touchAt < 400) g_cursorPt = g_touchPt;
+        if (button == 0 && !g_cursorFromPark.load() && g_touchPt != -1 && GetTickCount64() - g_touchAt < 400)
+            g_cursorPt = g_touchPt;
         g_pressPt = g_cursorPt.load();
         g_pressAt = GetTickCount64();
         g_dragging = false;
@@ -531,7 +536,7 @@ static void CursorToUV(float u, float v) {
         LPARAM pp = g_pressPt.load();
         int dx = x - (int)(short)LOWORD(pp), dy = y - (int)(short)HIWORD(pp);
         bool young = GetTickCount64() - g_pressAt.load() < kHoldMs;
-        if (young && dx * dx + dy * dy <= kTapSlop * kTapSlop) {
+        if (young && (g_cursorFromPark.load() || dx * dx + dy * dy <= kTapSlop * kTapSlop)) {
             if (pt != g_cursorPt.load()) ++g_heldMoves;
             return; // still a click: the cursor stays where the button went down
         }
@@ -623,12 +628,14 @@ void OnFrame(bool screenVisible, bool hudVisible) {
         rig::SetOverviewGrab(l || r, (l ? 1 : 0) | (r ? 2 : 0));
         float sx = c.stickX[off], sy = c.stickY[off];
         if (std::fabs(sx) > 0.15f || std::fabs(sy) > 0.15f) rig::OverviewPan(sx, sy, dt);
+        rig::OverviewFly(off, c.trigger[off], dt);
     } else {
         rig::SetOverviewGrab(false, 0);
     }
 
     // Pointer: flat screen (menus, tablet) or into the park (overview laser).
     bool pointing = false;
+    g_cursorFromPark = false;
     if (screenVisible) pointing = ScreenPointer(dom, dt);
     // The in-world HUD takes the pointer when the laser is on (park overview) and pointing at it: UI first,
     // then the park. In seats, guns and walking the trigger belongs to the game, so the HUD is look-only.
@@ -649,6 +656,7 @@ void OnFrame(bool screenVisible, bool hudVisible) {
             RECT rc;
             if (g_hwnd && GetClientRect(g_hwnd, &rc) && rc.bottom > 0) aspect = (float)rc.right / (float)rc.bottom;
             if (ProjectUV(cam, fovY, aspect, target, u, v)) {
+                g_cursorFromPark = true;
                 SmoothCursor(u, v, dt);
                 pointing = true;
             }

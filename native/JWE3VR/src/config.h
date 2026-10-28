@@ -28,6 +28,7 @@ struct Settings {
     float ipdScale = 1.0f;        // 1 = your real IPD; raise for a more miniature look
     bool horizonLock = true;      // vehicles: keep the horizon level instead of rolling with the cabin
     bool seated = false;
+    bool monoWhileMoving = true;  // park overview: both eyes get the same image while you move the park (stereo when still)
     float seatedEyeHeight = 1.20f; // real-world eye height while seated (m)
     float standingEyeHeight = 1.67f; // game guest eye height; your head height is added relative to this
     int snapTurnDeg = 30;         // 0 = smooth turn
