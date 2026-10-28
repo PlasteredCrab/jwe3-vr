@@ -1,6 +1,20 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.47  First headset test, part 4: the real reason for the black headset - the eye images' format
+    - 0.0.46 seen working: the trigger on CONTINUE loaded the park (no keyboard or mouse input in between), and
+      SteamVR's sync errors stopped. The headset (and SteamVR's VR View) still showed black in the park.
+    - SteamVR's OpenXR log for the game (Steam/logs/xrclient_JWE3.txt) says why, every frame: "ComposeLayerProjection:
+      failed to submit view 0/1: VRCompositorError_TextureUsesUnsupportedFormat". SteamVR's scene compositor does not
+      take the game's 10-bit backbuffer format (R10G10B10A2, DXGI 24) for eye images; its overlays (quad layers: the
+      menu screen, dot, beam) do, which is why only those ever showed. xrEndFrame still returns success.
+    - Fix: the eye swapchains are created in an 8-bit format SteamVR offers (RGBA8 UNORM first; the full offered list
+      is logged), and each eye's texture is drawn into the acquired image by a small fullscreen pass (pixel shader
+      loads the texel, alpha 1; compiled at first use with Windows' d3dcompiler_47.dll, recorded on the mod's own
+      command list). An sRGB target gets linearised values. Not yet seen in the headset.
+    - Lesson: SteamVR's per-app OpenXR log (xrclient_<exe>.txt) and vrcompositor.txt are where a silently dropped
+      layer shows up; check them first when OpenXR reports success but the headset is black.
+
 2026-10-28  0.0.46  First headset test, part 3: why the park never showed, and the menu clicks
     - With verbose logs (user's go-ahead): in the park the mod submitted 4 layers per frame (eye images, HUD panel,
       dot, beam), xrEndFrame XR_SUCCESS, eye views +-69 x +-58 deg and 0.03 m / 0 deg from the head, eye images'

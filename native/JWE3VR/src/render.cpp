@@ -9,6 +9,7 @@
 #include "xr.h"
 
 #include <dxgi1_6.h>
+#include <d3dcompiler.h>
 
 namespace jvr::render {
 
@@ -253,6 +254,7 @@ static void CopyBackbufferTo(ID3D12Resource* bb, xr::SwapId id) {
 static ID3D12Resource* g_eyeTex[2]{};
 static bool g_eyeTexFilled[2]{};
 static D3D12_RESOURCE_DESC g_eyeTexDesc{};
+static bool g_eyeSrvsStale = false; // eye textures (re)made: their SRVs are made before the next conversion
 
 static bool EnsureEyeTextures(const D3D12_RESOURCE_DESC& bb) {
     if (g_eyeTex[0] && g_eyeTex[1] && g_eyeTexDesc.Width == bb.Width && g_eyeTexDesc.Height == bb.Height &&
@@ -282,32 +284,227 @@ static bool EnsureEyeTextures(const D3D12_RESOURCE_DESC& bb) {
             return false;
         }
     g_eyeTexDesc = bb;
+    g_eyeSrvsStale = true;
     LOGI("eye images: per-eye textures %llux%u format %d; both eye swapchains are filled every frame",
          (unsigned long long)bb.Width, bb.Height, (int)bb.Format);
     return true;
 }
 
-// The rendered eye: backbuffer -> its texture, then both eyes' textures -> freshly acquired swapchain images.
-static void SubmitEyeImages(ID3D12Resource* bb, int eye) {
+// The eye swapchains are 8-bit (xr::EyeFormat; SteamVR's scene compositor rejects the game's 10-bit format), and a
+// copy cannot change format, so each eye's texture is drawn into the acquired image: one fullscreen triangle whose
+// pixel shader loads the source texel (same size) and writes it with alpha 1. Compiled at first use with Windows' own
+// d3dcompiler_47.dll; recorded on the mod's own command list, so none of the game's state is touched.
+static const char kConvertHlsl[] =
+    "Texture2D<float4> src : register(t0);\n"
+    "float4 VS(uint id : SV_VertexID) : SV_Position {\n"
+    "    float2 uv = float2((id << 1) & 2, id & 2);\n"
+    "    return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);\n"
+    "}\n"
+    "float4 PS(float4 pos : SV_Position) : SV_Target {\n"
+    "    float3 c = src.Load(int3(pos.xy, 0)).rgb;\n"
+    "#ifdef SRGB_TARGET\n"
+    "    // The values are already gamma-encoded; an sRGB target encodes again on write, so hand it linear values.\n"
+    "    c = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);\n"
+    "#endif\n"
+    "    return float4(c, 1);\n"
+    "}\n";
+
+struct Converter {
+    ID3D12RootSignature* root = nullptr;
+    ID3D12PipelineState* pso = nullptr;
+    ID3D12DescriptorHeap* srvHeap = nullptr; // shader-visible, one SRV per eye texture
+    ID3D12DescriptorHeap* rtvHeap = nullptr; // one RTV per eye (read when the draw is recorded)
+    UINT srvStep = 0, rtvStep = 0;
+    DXGI_FORMAT target = DXGI_FORMAT_UNKNOWN;
+    bool failed = false;
+};
+static Converter g_conv;
+
+static bool IsSrgb(DXGI_FORMAT f) { return f == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || f == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB; }
+
+static ID3DBlob* CompileShader(const char* entry, const char* target, bool srgb) {
+    static pD3DCompile compile = nullptr;
+    if (!compile) {
+        HMODULE m = LoadLibraryW(L"d3dcompiler_47.dll");
+        compile = m ? (pD3DCompile)GetProcAddress(m, "D3DCompile") : nullptr;
+        if (!compile) {
+            LOGE("eye images: d3dcompiler_47.dll / D3DCompile not found; cannot convert the eye images");
+            return nullptr;
+        }
+    }
+    D3D_SHADER_MACRO defs[] = {{"SRGB_TARGET", "1"}, {nullptr, nullptr}};
+    ID3DBlob *code = nullptr, *errors = nullptr;
+    HRESULT hr = compile(kConvertHlsl, sizeof(kConvertHlsl) - 1, "jwe3vr_convert", srgb ? defs : nullptr, nullptr, entry,
+                         target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &errors);
+    if (FAILED(hr)) {
+        LOGE("eye images: shader %s failed to compile (0x%08lx): %s", entry, (unsigned long)hr,
+             errors ? (const char*)errors->GetBufferPointer() : "");
+        SafeRelease(code);
+    }
+    SafeRelease(errors);
+    return code;
+}
+
+static bool EnsureConverter(DXGI_FORMAT target) {
+    if (g_conv.pso && g_conv.target == target) return true;
+    if (g_conv.failed || !g_device) return false;
+    WaitCopies();
+    SafeRelease(g_conv.pso);
+    SafeRelease(g_conv.root);
+    SafeRelease(g_conv.srvHeap);
+    SafeRelease(g_conv.rtvHeap);
+    g_conv.failed = true; // until everything below has worked
+    auto serialize =
+        (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(GetModuleHandleW(L"d3d12.dll"), "D3D12SerializeRootSignature");
+    if (!serialize) {
+        LOGE("eye images: D3D12SerializeRootSignature not found");
+        return false;
+    }
+    D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
+    D3D12_ROOT_PARAMETER param{};
+    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    param.DescriptorTable = {1, &range};
+    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC rd{1, &param, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    ID3DBlob *sig = nullptr, *err = nullptr;
+    if (FAILED(serialize(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err)) ||
+        FAILED(g_device->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&g_conv.root)))) {
+        LOGE("eye images: root signature failed: %s", err ? (const char*)err->GetBufferPointer() : "");
+        SafeRelease(sig);
+        SafeRelease(err);
+        return false;
+    }
+    SafeRelease(sig);
+    SafeRelease(err);
+    bool srgb = IsSrgb(target);
+    ID3DBlob* vs = CompileShader("VS", "vs_5_0", srgb);
+    ID3DBlob* ps = CompileShader("PS", "ps_5_0", srgb);
+    if (!vs || !ps) {
+        SafeRelease(vs);
+        SafeRelease(ps);
+        return false;
+    }
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pd{};
+    pd.pRootSignature = g_conv.root;
+    pd.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+    pd.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
+    pd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    pd.SampleMask = UINT_MAX;
+    pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pd.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+    pd.RasterizerState.DepthClipEnable = TRUE;
+    pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pd.NumRenderTargets = 1;
+    pd.RTVFormats[0] = target;
+    pd.SampleDesc.Count = 1;
+    HRESULT hr = g_device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&g_conv.pso));
+    SafeRelease(vs);
+    SafeRelease(ps);
+    if (FAILED(hr)) {
+        LOGE("eye images: pipeline state failed (0x%08lx)", (unsigned long)hr);
+        return false;
+    }
+    D3D12_DESCRIPTOR_HEAP_DESC sh{D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 0};
+    D3D12_DESCRIPTOR_HEAP_DESC rh{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+    if (FAILED(g_device->CreateDescriptorHeap(&sh, IID_PPV_ARGS(&g_conv.srvHeap))) ||
+        FAILED(g_device->CreateDescriptorHeap(&rh, IID_PPV_ARGS(&g_conv.rtvHeap)))) {
+        LOGE("eye images: descriptor heaps failed");
+        return false;
+    }
+    g_conv.srvStep = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    g_conv.rtvStep = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    g_conv.target = target;
+    g_conv.failed = false;
+    g_eyeSrvsStale = true; // a new heap: its SRVs are made before the next conversion
+    LOGI("eye images: converting the game's format %d into the eye swapchains' format %d%s", (int)g_eyeTexDesc.Format,
+         (int)target, srgb ? " (sRGB target: values linearised first)" : "");
+    return true;
+}
+
+// An SRV per eye texture, made when the textures or the heap are new (the GPU is idle on them then: both wait for the
+// copies first).
+static void MakeEyeSrvs() {
+    if (!g_conv.srvHeap) return;
+    for (int i = 0; i < 2; ++i) {
+        if (!g_eyeTex[i]) continue;
+        D3D12_SHADER_RESOURCE_VIEW_DESC sd{};
+        sd.Format = g_eyeTexDesc.Format;
+        sd.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        sd.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        sd.Texture2D.MipLevels = 1;
+        D3D12_CPU_DESCRIPTOR_HANDLE h = g_conv.srvHeap->GetCPUDescriptorHandleForHeapStart();
+        h.ptr += (SIZE_T)i * g_conv.srvStep;
+        g_device->CreateShaderResourceView(g_eyeTex[i], &sd, h);
+    }
+}
+
+static bool ConvertInto(int eye, ID3D12Resource* img) {
+    D3D12_RESOURCE_DESC id = img->GetDesc();
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_conv.rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    rtv.ptr += (SIZE_T)eye * g_conv.rtvStep;
+    D3D12_RENDER_TARGET_VIEW_DESC rd{};
+    rd.Format = g_conv.target;
+    rd.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    g_device->CreateRenderTargetView(img, &rd, rtv);
+    D3D12_GPU_DESCRIPTOR_HANDLE srv = g_conv.srvHeap->GetGPUDescriptorHandleForHeapStart();
+    srv.ptr += (UINT64)eye * g_conv.srvStep;
     ID3D12Resource* tex = g_eyeTex[eye];
-    bool ok = Submit([&](ID3D12GraphicsCommandList* list) {
-        D3D12_RESOURCE_BARRIER pre[2] = {Transition(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
-                                         Transition(tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST)};
-        list->ResourceBarrier(2, pre);
-        list->CopyResource(tex, bb);
-        D3D12_RESOURCE_BARRIER post[2] = {Transition(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
-                                          Transition(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE)};
-        list->ResourceBarrier(2, post);
+    return Submit([&](ID3D12GraphicsCommandList* list) {
+        D3D12_RESOURCE_BARRIER b = Transition(tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        list->ResourceBarrier(1, &b);
+        list->SetGraphicsRootSignature(g_conv.root);
+        list->SetPipelineState(g_conv.pso);
+        list->SetDescriptorHeaps(1, &g_conv.srvHeap);
+        list->SetGraphicsRootDescriptorTable(0, srv);
+        list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        D3D12_VIEWPORT vp{0, 0, (float)id.Width, (float)id.Height, 0, 1};
+        D3D12_RECT sc{0, 0, (LONG)id.Width, (LONG)id.Height};
+        list->RSSetViewports(1, &vp);
+        list->RSSetScissorRects(1, &sc);
+        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        list->DrawInstanced(3, 1, 0, 0);
+        b = Transition(tex, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        list->ResourceBarrier(1, &b);
     });
-    if (ok) g_eyeTexFilled[eye] = true;
+}
+
+// Backbuffer -> the eye's texture (eye -1: both), then both eyes' textures -> freshly acquired swapchain images:
+// copied when the formats match, else drawn through the converter.
+static void SubmitEyeImages(ID3D12Resource* bb, int eye) {
+    for (int e = 0; e < 2; ++e) {
+        if (eye >= 0 && e != eye) continue;
+        ID3D12Resource* tex = g_eyeTex[e];
+        bool ok = Submit([&](ID3D12GraphicsCommandList* list) {
+            D3D12_RESOURCE_BARRIER pre[2] = {Transition(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                                             Transition(tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST)};
+            list->ResourceBarrier(2, pre);
+            list->CopyResource(tex, bb);
+            D3D12_RESOURCE_BARRIER post[2] = {Transition(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
+                                              Transition(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE)};
+            list->ResourceBarrier(2, post);
+        });
+        if (ok) g_eyeTexFilled[e] = true;
+    }
+    DXGI_FORMAT target = xr::EyeFormat();
+    bool convert = target != g_eyeTexDesc.Format;
+    if (convert && !EnsureConverter(target)) {
+        JVR_LOG_ONCE("eye images: no converter; the headset gets the game's format, which SteamVR may reject");
+        convert = false;
+    }
+    if (convert && g_eyeSrvsStale) {
+        MakeEyeSrvs();
+        g_eyeSrvsStale = false;
+    }
     for (int i = 0; i < 2; ++i) {
         if (!g_eyeTexFilled[i]) continue;
         xr::SwapId id = i == 0 ? xr::SwapId::Left : xr::SwapId::Right;
         if (ID3D12Resource* img = xr::AcquireImage(id)) {
-            CopyToImage(g_eyeTex[i], D3D12_RESOURCE_STATE_COPY_SOURCE, img);
+            if (convert) ConvertInto(i, img);
+            else CopyToImage(g_eyeTex[i], D3D12_RESOURCE_STATE_COPY_SOURCE, img);
             xr::ReleaseImage(id);
         }
     }
+    JVR_LOG_ONCE("eye images: both eyes submitted (%s)", convert ? "converted" : "copied");
 }
 
 // White disc with a dark rim, premultiplied alpha, in the dot swapchain's format (kept in COPY_SOURCE).
@@ -834,8 +1031,12 @@ static void OnPresent(IDXGISwapChain* sc) {
             else CopyBackbufferTo(bb, req.eye == 0 ? xr::SwapId::Left : xr::SwapId::Right);
             g_views[req.eye] = {req.stagePose, fov, true};
         } else {
-            CopyBackbufferTo(bb, xr::SwapId::Left);
-            CopyBackbufferTo(bb, xr::SwapId::Right);
+            if (EnsureEyeTextures(d)) {
+                SubmitEyeImages(bb, -1);
+            } else {
+                CopyBackbufferTo(bb, xr::SwapId::Left);
+                CopyBackbufferTo(bb, xr::SwapId::Right);
+            }
             g_views[0] = g_views[1] = {req.stagePose, fov, true};
         }
     }

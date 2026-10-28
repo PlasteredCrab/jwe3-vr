@@ -48,6 +48,7 @@ static UINT g_hudFailedW = 0, g_hudFailedH = 0;
 static DXGI_FORMAT g_hudFailedFormat = DXGI_FORMAT_UNKNOWN;
 static Swap g_swaps[5]; // Left, Right, Screen, Hud (the UI texture's size and format), Dot (kDotSize)
 static DXGI_FORMAT g_dotSwapFormat = DXGI_FORMAT_UNKNOWN; // the Dot swapchain's own (8-bit) format
+static DXGI_FORMAT g_eyeSwapFormat = DXGI_FORMAT_UNKNOWN; // the eye swapchains' format (8-bit; render.cpp converts)
 static XrPosef g_hudPose{{0, 0, 0, 1}, {0, 1.4f, -1.4f}};
 static bool g_hudPlaced = false;
 static Pose g_rawHead;
@@ -714,6 +715,26 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
         LOGE("headset runtime has no swapchain format compatible with the game's backbuffer (%d); turn HDR off", (int)bb);
         return false;
     }
+    // The eye images: SteamVR's scene compositor rejects the game's 10-bit format (xrclient_JWE3.txt, first headset
+    // test: "ComposeLayerProjection: failed to submit view 0: VRCompositorError_TextureUsesUnsupportedFormat" every
+    // frame, a black headset; its overlays - quad layers - take it, so the menu screen showed). So the eyes get an
+    // 8-bit swapchain and render.cpp converts the frame into it (a UNORM one first: the game's values are already
+    // gamma-encoded).
+    {
+        std::string list;
+        for (int64_t f : fmts) list += std::to_string(f) + " ";
+        LOGI("OpenXR swapchain formats offered: %s", list.c_str());
+    }
+    g_eyeSwapFormat = g_format;
+    for (DXGI_FORMAT pref : {DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+                             DXGI_FORMAT_B8G8R8A8_UNORM_SRGB}) {
+        bool found = false;
+        for (int64_t f : fmts) found = found || (DXGI_FORMAT)f == pref;
+        if (found) {
+            g_eyeSwapFormat = pref;
+            break;
+        }
+    }
     // The pointer dot (and laser beam) is drawn from an 8-bit RGBA image with alpha: give it an 8-bit swapchain even
     // when the eyes use the game's 10-bit format (2-bit alpha, and render.cpp builds the image only in 8 bits).
     g_dotSwapFormat = g_format;
@@ -729,7 +750,8 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
     for (int i = 0; i < 5; ++i) {
         if (i == (int)SwapId::Hud) continue; // EnsureHudSwapchain: sized and formatted like the game's UI texture
         UINT w = i == 4 ? kDotSize : width, h = i == 4 ? kDotSize : height;
-        if (!CreateSwap(g_swaps[i], w, h, i == 4 ? g_dotSwapFormat : g_format)) {
+        DXGI_FORMAT f = i == 4 ? g_dotSwapFormat : (i <= 1 ? g_eyeSwapFormat : g_format);
+        if (!CreateSwap(g_swaps[i], w, h, f)) {
             DestroySwapchains(); // all or none: EndFrame must never reference a missing one
             return false;
         }
@@ -737,8 +759,8 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
     g_screenAspect = (float)width / (float)height;
     rig::SetRenderAspect(g_screenAspect);
     g_failedW = g_failedH = 0;
-    LOGI("swapchains %ux%u format %d (backbuffer %d), pointer dot format %d", width, height, (int)g_format, (int)bb,
-         (int)g_dotSwapFormat);
+    LOGI("swapchains %ux%u format %d (backbuffer %d), eye images format %d, pointer dot format %d", width, height,
+         (int)g_format, (int)bb, (int)g_eyeSwapFormat, (int)g_dotSwapFormat);
     return true;
 }
 
@@ -957,6 +979,7 @@ bool RawAim(int hand, Pose& out) {
 }
 
 DXGI_FORMAT DotFormat() { return g_dotSwapFormat; }
+DXGI_FORMAT EyeFormat() { return g_eyeSwapFormat; }
 
 bool HudRect(Vec3& centre, Vec3& right, Vec3& up, float& halfW, float& halfH) {
     if (!g_swaps[3].handle) return false;

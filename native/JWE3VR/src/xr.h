@@ -58,6 +58,8 @@ struct Layers {
 void EndFrame(const EyeView eyes[2], const Layers& layers);
 // The pointer dot image (DXGI format of the dot swapchain) and its size in pixels.
 DXGI_FORMAT DotFormat();
+// The eye swapchains' format (8-bit even when the game's frame is 10-bit; render.cpp converts into it).
+DXGI_FORMAT EyeFormat();
 constexpr UINT kDotSize = 64;
 bool HudRect(vm::Vec3& centre, vm::Vec3& right, vm::Vec3& up, float& halfW, float& halfH);
 
