@@ -1,6 +1,21 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.27  More of the controller layer on scripted input: recentre, glide, gun aim, lift-off (runs 109-111)
+    - Both stick clicks recentre ("recentred: yaw -20.3 deg, head height 0.71 m" - the headset rests on a desk).
+    - Off-hand stick in the park overview glides: the response facility moved down the view and grew.
+    - Gun seat (jeep), AIM for 8 s (hand pointing where the resting headset looks): the gun's yaw error closed
+      from -98.5 to -2.5 degrees, so the closed loop works; pitch stayed at -21 with the stick at full deflection -
+      the resting headset looks further down than the gun can point.
+    - Helicopter: the VR dominant trigger lifted it off (pad RT through the mapping), off-hand Y in the air -> gun
+      seat.
+    - Not seen: a shot. Neither the VR trigger nor pad RT, A, RB or X made the game report a shot, in the jeep's
+      seat (binoculars: status check, flares, summon - they need something to scan) or the helicopter's
+      (tranquilliser). Firing is handled by the game's native gunner controller, not its Lua; most likely it needs
+      a target, and the test park has no dinosaurs. New log lines for the headset session: "gun aim: hand vs gun
+      ..." (first 8 every 2 s per stay), "the game reports a shot" (the game's own handler) and "weapon fired" (the
+      mod's receiver, the haptic kick).
+
 2026-10-27  0.0.26  Scripted VR controllers: the mod's controller layer tested at last (runs 102-108)
     - New debug input JWE3VR_vr.txt (re/remote/vrstep.sh): VR controller buttons, triggers, grips, sticks and an AIM
       step (both hands point where the headset looks) replace the runtime's controller state, which is empty while

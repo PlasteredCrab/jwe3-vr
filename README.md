@@ -231,8 +231,10 @@ input, `JWE3VR_vr.txt`, not real controllers). Go through it in order; each step
    in the driver's seat at the game's own seat camera and look around with your head; the triggers drive, the left
    stick steers, both grips make a steering wheel. Log: "camera mode FirstPersonVehicle (rig kind 3".
 9. **Gun seat:** off-hand Y. You sit at the gun mount with the gunner's own body hidden; the gun follows your hand
-   and the trigger fires. Log: "character model ... hidden in the gun seat". Dominant B goes back to the driver's
-   seat ("shown again").
+   and the trigger fires. Log: "character model ... hidden in the gun seat", "gun aim: hand vs gun yaw ..., pitch
+   ..." (the error should shrink as the gun turns to your hand), and on a shot "the game reports a shot" and
+   "weapon fired". The capture helicopter has the tranquilliser; the ranger jeep's gunner uses binoculars, which
+   need something to scan. Dominant B goes back to the driver's seat ("shown again").
 10. **Photo mode:** in the jeep's driver's seat, click the dominant stick; dominant A takes the photo, then the game shows
     its details to submit or discard. Log: "ui mode photo in". Check that the photo shows what you were looking at.
 11. **Helicopter:** take control of the capture helicopter. You are put in its seat (log: "asked for the

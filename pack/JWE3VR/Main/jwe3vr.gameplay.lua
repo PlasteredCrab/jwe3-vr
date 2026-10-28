@@ -108,6 +108,7 @@ local SetUIMode = function(sTag, bOn, self)
     if bOn then
         Gameplay.sUIMode = sTag
         Gameplay.oUIMode = self
+        if sTag == "gunner" then Gameplay.nAimLogs, Gameplay.bFireLogged, Gameplay.bGameFireLogged = 0, false, false end
     elseif Gameplay.sUIMode == sTag then
         Gameplay.sUIMode = nil
         Gameplay.oUIMode = nil
@@ -180,6 +181,13 @@ Gameplay.GunnerAim = function()
     local nCmdY = Clamp(nErrY * nGain * t.signY, -1, 1)
     AdaptSign(t, "X", nErrX, nCmdX)
     AdaptSign(t, "Y", nErrY, nCmdY)
+    -- Aim error now and then (at most 8 lines per gun-seat stay): a working loop shows it shrinking.
+    local nNow = Gameplay.nLastNow or 0
+    if (Gameplay.nAimLogs or 0) < 8 and nNow - (Gameplay.nAimLogAt or -10) >= 2 then
+        Gameplay.nAimLogs, Gameplay.nAimLogAt = (Gameplay.nAimLogs or 0) + 1, nNow
+        Bridge.Text(global.string.format("gun aim: hand vs gun yaw %.1f, pitch %.1f deg; stick %.2f %.2f",
+                                         nErrX * 57.3, nErrY * 57.3, nCmdX, nCmdY))
+    end
     return nCmdX, nCmdY, true
 end
 
@@ -200,6 +208,18 @@ Gameplay.PatchGunnerMode = function(tModule)
         if Gameplay.oGunnerMode == self then Gameplay.oGunnerMode = nil end
         pcall(SetUIMode, "gunner", false, self)
         return fnOut(self, ...)
+    end
+    -- The game's own handler of its gunner's shots (looked up through self when a message arrives, so wrapping
+    -- the module function reaches it): proof that a shot happened, independent of the mod's own receiver.
+    local fnFired = tModule._HandleWeaponFiredMessage
+    if global.type(fnFired) == "function" then
+        tModule._HandleWeaponFiredMessage = function(self, tMessages, ...)
+            if not Gameplay.bGameFireLogged then
+                Gameplay.bGameFireLogged = true
+                pcall(Bridge.Text, "gun seat: the game reports a shot")
+            end
+            return fnFired(self, tMessages, ...)
+        end
     end
 end
 
@@ -232,6 +252,10 @@ end
 
 Gameplay.OnWeaponFired = function()
     Bridge.Haptic(Gameplay.nDominant, 0.9, 0.08, 0)
+    if not Gameplay.bFireLogged then
+        Gameplay.bFireLogged = true
+        Bridge.Text("gun seat: weapon fired (haptic kick)")
+    end
 end
 
 ------------------------------------------------------------------------
