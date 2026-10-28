@@ -25,6 +25,8 @@ void OnRootCbv(ID3D12GraphicsCommandList* list, D3D12_GPU_VIRTUAL_ADDRESS va);
 std::string DecodeMarker(UINT metadata, const void* data, UINT size);
 void OnMarker(ID3D12GraphicsCommandList* list, const std::string& name);
 void OnMap(ID3D12Resource* resource, void* cpu);
+// Any thread: a constant buffer view descriptor the game created (its GPU address), for the memory scan.
+void OnCreateCbv(D3D12_GPU_VIRTUAL_ADDRESS va);
 
 // Called from the ExecuteCommandLists hook. Returns true if it executed the lists itself (sync replay).
 using ExecuteFn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);

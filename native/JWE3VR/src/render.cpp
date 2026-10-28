@@ -879,6 +879,13 @@ static void STDMETHODCALLTYPE Hk_CopyResource(ID3D12GraphicsCommandList* l, ID3D
     o_CopyResource(l, dst, src);
 }
 
+using CreateCbvFn = void(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_CONSTANT_BUFFER_VIEW_DESC*, D3D12_CPU_DESCRIPTOR_HANDLE);
+static CreateCbvFn o_CreateCbv;
+static void STDMETHODCALLTYPE Hk_CreateCbv(ID3D12Device* dev, const D3D12_CONSTANT_BUFFER_VIEW_DESC* d, D3D12_CPU_DESCRIPTOR_HANDLE h) {
+    if (d) viewcb::OnCreateCbv(d->BufferLocation);
+    o_CreateCbv(dev, d, h);
+}
+
 static void STDMETHODCALLTYPE Hk_CreateRtv(ID3D12Device* dev, ID3D12Resource* r, const D3D12_RENDER_TARGET_VIEW_DESC* d,
                                            D3D12_CPU_DESCRIPTOR_HANDLE h) {
     o_CreateRtv(dev, r, d, h);
@@ -1005,6 +1012,7 @@ bool InstallHooks() {
         hooks::Create("ID3D12GraphicsCommandList::ClearRenderTargetView", hooks::VtableEntry(list, 48), (void*)Hk_ClearRtv,
                       (void**)&o_ClearRtv);
         hooks::Create("ID3D12Device::CreateRenderTargetView", hooks::VtableEntry(dev, 20), (void*)Hk_CreateRtv, (void**)&o_CreateRtv);
+        hooks::Create("ID3D12Device::CreateConstantBufferView", hooks::VtableEntry(dev, 17), (void*)Hk_CreateCbv, (void**)&o_CreateCbv);
         // Diagnostics (counted only; see LogFrameStats).
         hooks::Create("ID3D12GraphicsCommandList::CopyTextureRegion", hooks::VtableEntry(list, 16), (void*)Hk_CopyRegion,
                       (void**)&o_CopyRegion);

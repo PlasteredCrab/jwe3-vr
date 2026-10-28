@@ -209,7 +209,24 @@ static std::atomic<bool> g_scanning{false};
 
 static const char* MemType(DWORD t) { return t == MEM_PRIVATE ? "private" : t == MEM_MAPPED ? "mapped" : t == MEM_IMAGE ? "image" : "?"; }
 
+// The CPU - GPU address offset most of these CPU addresses share with some GPU address in vaSet (a ring of constant
+// buffers: every hit sits at the same offset from the buffer address it was bound or described at). Each candidate
+// comes from one hit and one address and is counted by lookups, so the work is hits x addresses x hits, no big map.
+static void BestOffset(const std::vector<uint8_t*>& list, const std::vector<D3D12_GPU_VIRTUAL_ADDRESS>& vas,
+                       const std::unordered_set<D3D12_GPU_VIRTUAL_ADDRESS>& vaSet, long long& best, int& count) {
+    best = 0;
+    count = 0;
+    for (size_t a = 0; a < list.size() && count < (int)list.size(); ++a)
+        for (D3D12_GPU_VIRTUAL_ADDRESS v : vas) {
+            long long off = (long long)((uintptr_t)list[a] - v);
+            int n = 0;
+            for (uint8_t* c : list) n += vaSet.count((D3D12_GPU_VIRTUAL_ADDRESS)((uintptr_t)c - off)) ? 1 : 0;
+            if (n > count) best = off, count = n;
+        }
+}
+
 static void ScanMain(Vec3 cam, std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vas) {
+    const std::unordered_set<D3D12_GPU_VIRTUAL_ADDRESS> vaSet(vas.begin(), vas.end());
     ULONGLONG start = GetTickCount64();
     struct Region {
         uint8_t* base;
@@ -299,16 +316,9 @@ static void ScanMain(Vec3 cam, std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vas) {
     int rings = 0;
     for (auto& [alloc, list] : byAlloc) {
         if (list.size() < 3) continue;
-        std::unordered_map<long long, int> votes;
-        for (uint8_t* c : list) {
-            std::unordered_set<long long> mine;
-            for (D3D12_GPU_VIRTUAL_ADDRESS v : vas)
-                if (mine.insert((long long)((uintptr_t)c - v)).second) ++votes[(long long)((uintptr_t)c - v)];
-        }
         long long best = 0;
         int count = 0;
-        for (auto& [x, n] : votes)
-            if (n > count) best = x, count = n;
+        BestOffset(list, vas, vaSet, best, count);
         LOGI("cb scan: allocation %p: %zu hits, best CPU - GPU offset %llx shared by %d of them", alloc, list.size(),
              (unsigned long long)best, count);
         if (count < 3 || rings++ > 0) continue;
@@ -367,24 +377,47 @@ static void ScanMain(Vec3 cam, std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vas) {
         std::map<void*, std::vector<uint8_t*>> pByAlloc;
         for (const Hit& h : pFound) pByAlloc[h.alloc].push_back(h.at);
         for (auto& [alloc, list] : pByAlloc) {
-            std::unordered_map<long long, int> votes;
-            for (uint8_t* c : list) {
-                std::unordered_set<long long> mine;
-                for (D3D12_GPU_VIRTUAL_ADDRESS v : vas)
-                    if (mine.insert((long long)((uintptr_t)c - v)).second) ++votes[(long long)((uintptr_t)c - v)];
-            }
             long long best = 0;
             int bestCount = 0;
-            for (auto& [x, nv] : votes)
-                if (nv > bestCount) best = x, bestCount = nv;
+            BestOffset(list, vas, vaSet, best, bestCount);
             LOGI("cb scan: projection allocation %p: %zu hits, best CPU - GPU offset %llx shared by %d of them", alloc, list.size(),
                  (unsigned long long)best, bestCount);
+            // Check the candidate: every root CBV bound this frame, moved by that offset - how many land in readable memory
+            // of this allocation, and how many of those hold the projection pair in their first 512 bytes? A real mapping
+            // of the view ring gives many of both; a coincidence of evenly spaced addresses gives few.
+            int inside = 0, withProj = 0;
+            for (D3D12_GPU_VIRTUAL_ADDRESS v : vas) {
+                uint8_t* c = (uint8_t*)(uintptr_t)(v + best);
+                MEMORY_BASIC_INFORMATION q{};
+                if (!VirtualQuery(c, &q, sizeof(q)) || q.AllocationBase != alloc || q.State != MEM_COMMIT) continue;
+                ++inside;
+                float b[128];
+                if (!SafeRead(c, b, sizeof(b))) continue;
+                for (int k = 0; k + 5 < 128; ++k)
+                    if (close(b[k], p00) && close(b[k + 5], p11)) {
+                        ++withProj;
+                        break;
+                    }
+            }
+            LOGI("cb scan:   check: %d of %zu bound CBVs map into this allocation at that offset, %d hold the projection", inside,
+                 vas.size(), withProj);
         }
     } else {
         LOGI("cb scan: no rig FOV yet; projection pass skipped");
     }
     LOGI("cb scan: done in %.1f s, %d hits, %d ring candidates", (GetTickCount64() - start) / 1000.0, hits, rings);
     g_scanning = false;
+}
+
+// The last kCbvLog buffer addresses the game made CBV descriptors for (JWE3 may bind its view constants through
+// descriptor tables rather than root CBVs; the scan votes against both). Written lock-free: an aligned 64-bit store.
+constexpr size_t kCbvLog = 1 << 16;
+static D3D12_GPU_VIRTUAL_ADDRESS g_cbvLog[kCbvLog];
+static std::atomic<uint64_t> g_cbvCount{0};
+
+void OnCreateCbv(D3D12_GPU_VIRTUAL_ADDRESS va) {
+    uint64_t i = g_cbvCount.fetch_add(1, std::memory_order_relaxed);
+    g_cbvLog[i & (kCbvLog - 1)] = va;
 }
 
 void RequestScan() {
@@ -405,6 +438,14 @@ void RequestScan() {
         for (D3D12_GPU_VIRTUAL_ADDRESS va : li.cbvs)
             if (vas.size() < 20000) vas.push_back(va);
     ReleaseSRWLockShared(&g_listLock);
+    // CBV descriptor addresses, unique, appended after the root CBVs (the scan votes on the whole list).
+    uint64_t made = g_cbvCount.load();
+    std::unordered_set<D3D12_GPU_VIRTUAL_ADDRESS> seen(vas.begin(), vas.end());
+    size_t roots = vas.size();
+    for (uint64_t k = 0; k < std::min<uint64_t>(made, kCbvLog); ++k)
+        if (D3D12_GPU_VIRTUAL_ADDRESS va = g_cbvLog[k]; va && seen.insert(va).second) vas.push_back(va);
+    LOGI("cb scan: %zu root CBV addresses and %zu more from %llu CBV descriptors created since the mod loaded", roots,
+         vas.size() - roots, (unsigned long long)made);
     std::thread(ScanMain, cam, std::move(vas)).detach();
 }
 
