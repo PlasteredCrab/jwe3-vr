@@ -251,7 +251,9 @@ haptics, and anything about how it looks or feels in the headset (two-hand scale
 9. **Gun seat:** off-hand Y. You sit at the gun mount with the gunner's own body hidden; the gun follows your hand
    and the trigger fires. Log: "character model ... hidden in the gun seat", "gun aim: hand vs gun yaw ..., pitch
    ..." (the error should shrink as the gun turns to your hand), and on a shot "the game reports a shot" and
-   "weapon fired". The capture helicopter has the tranquilliser; the ranger jeep's gunner uses binoculars, which
+   "weapon fired". A dot should sit where the gun points and follow it as it catches up with your hand (the log's
+   "sight on ..." says what it is on); "projectile type ... hit ..." says where each dart landed. The capture
+   helicopter has the tranquilliser; the ranger jeep's gunner uses binoculars, which
    need something to scan. Dominant B goes back to the driver's seat ("shown again").
 10. **Photo mode:** in the jeep's driver's seat, click the dominant stick; dominant A takes the photo, then the game shows
     its details to submit or discard. Log: "ui mode photo in". Check that the photo shows what you were looking at.
@@ -263,6 +265,12 @@ haptics, and anything about how it looks or feels in the headset (two-hand scale
 12. **Walking:** in the park, the left toolbar's FIRST PERSON VIEW button (a person with a camera), then a spot on
     the ground. You stand there at your real height; the left stick walks where you look, the dominant stick turns.
     Hold dominant B to leave. Log: "camera mode Guest (rig kind 2".
+13. **On-foot tools:** while walking, tap dominant B for the dart rifle (log: "on foot: dart rifle"); the dot
+    shows where you aim. Pull the trigger at a dinosaur: "dart rifle: hit dinosaur ..., dart 1 of 3"; three hits
+    put it down. Tap on for the medicine gun (cures a sick dinosaur) and the radio (A calls a jeep).
+14. **Aviary drone:** in an aviary hatchery's panel, the drone tab, PILOT DRONE. You fly it from its own camera
+    (left stick); once it is in the air, off-hand Y enters its aim mode, which works like the gun seat (the dot,
+    the trigger, the off-hand stick for the equipment).
 
 ## Settings (`Win64\ovldata\JWE3VR\JWE3VR.ini`, saved changes apply live)
 
