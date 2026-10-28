@@ -88,6 +88,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | --- | --- | --- |
 | Everywhere | Click both thumbsticks | Recentre |
 | Everywhere | Menu button | Pause (hold off-hand grip: Back) |
+| Pause menu (opened from the park overview) | Dominant A / B, sticks | Select / back (B resumes), move; the laser on the HUD panel clicks too |
 | Park, walking | Off-hand B/Y | Tablet: the game screen with its HUD in front of you |
 | Jeep / helicopter seat, gun seat | Off-hand grip + off-hand B/Y | Tablet (plain off-hand Y belongs to the game there) |
 | Flat screen, tablet; in-world HUD in the park overview | Point with dominant hand | Moves the game's cursor (your real mouse cursor stays put) |
@@ -202,7 +203,8 @@ game folder. ACSE is not required.
 ## First headset test
 
 None of this has been seen in a worn headset yet (remote runs without the headset have seen the log lines of
-steps 2, 4 and 8-12, and the rig on the rendered frame). Go through it in order; each step names the line in
+steps 2, 4, 6 (the tablet), 6a and 8-12 and the rig on the rendered frame; the controller steps ran with scripted controller
+input, `JWE3VR_vr.txt`, not real controllers). Go through it in order; each step names the line in
 `Win64\ovldata\JWE3VR\JWE3VR.log` that says it works. When a step fails, note which one and keep the log.
 
 1. **Main menu:** the menu is a large flat screen in front of you and the game window keeps working. Log:
@@ -276,6 +278,9 @@ The file is written with comments on first run. The ones you are most likely to 
 - **Vehicles ignore the controllers:** JWE3 adopts a pad only after it sees a keystroke from it; look for "virtual
   pad: announced on XInput slot 0" and, in `JWE3VR_shot.req` lines, XInputGetState calls on slot 0.
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
+  `JWE3VR_vr.txt` plays VR controller input (buttons, triggers, grips, sticks, `AIM` = the hands point where the
+  headset looks; format in `xr.cpp`), so the mod's own controller mapping runs with no one wearing the headset;
+  `re/remote/vrstep.sh <name> [lines...]` plays one and takes a screenshot.
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), the VR laser's own click path (`LASER=x,y`), `FOCUS`, keys and pad
   buttons (format in `input.cpp`). The game reads no XInput on its menus and ignores posted keys; clicks register
   only while it has focus (add `FOCUS`), and only once the UI has seen the cursor there (send a click twice).

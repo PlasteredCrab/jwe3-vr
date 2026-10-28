@@ -1,4 +1,5 @@
 #include "xr.h"
+#include "common.h"
 #include "config.h"
 #include "log.h"
 #include "render.h"
@@ -9,9 +10,12 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include <cstdio>
 #include <deque>
 #include <map>
 #include <mutex>
+#include <string>
+#include <vector>
 
 namespace jvr::xr {
 
@@ -325,6 +329,107 @@ static void PollEvents() {
     }
 }
 
+// Debug aid for remote tests: with nobody wearing the headset the runtime reports no controller input, so a file
+// JWE3VR_vr.txt next to the DLL is played as VR controller input, one step per line: "<actions> <ms>", actions joined
+// with '+':
+//   R.A R.B L.X L.Y      face buttons (right A / B, left X / Y)      R.CLICK L.CLICK   stick clicks      MENU
+//   R.TRIG L.TRIG        triggers fully pulled                       R.GRIP L.GRIP     grips fully squeezed
+//   R.SX= R.SY= L.SX= L.SY=   sticks, -1..1
+//   AIM                  both hands' aim and grip poses at the head (the laser points where the headset looks)
+//   -                    nothing
+// While it plays it replaces the runtime's controller state; the file is consumed when read. Everything downstream
+// (the Lua controls, the virtual pad, the laser) runs as with real controllers.
+struct VrStep {
+    Controls c;
+    bool aim = false;
+    ULONGLONG ms = 0;
+};
+static std::vector<VrStep> g_vrScript;
+static size_t g_vrStep = 0;
+static ULONGLONG g_vrStepAt = 0, g_vrCheck = 0;
+
+static bool ParseVrStep(const std::string& line, VrStep& s) {
+    char what[256] = {};
+    unsigned ms = 0;
+    if (sscanf_s(line.c_str(), "%255s %u", what, (unsigned)sizeof(what), &ms) != 2) return false;
+    s.ms = ms;
+    std::string all = what;
+    size_t at = 0;
+    while (at <= all.size()) {
+        size_t plus = all.find('+', at);
+        std::string k = all.substr(at, plus == std::string::npos ? std::string::npos : plus - at);
+        at = plus == std::string::npos ? all.size() + 1 : plus + 1;
+        float v = 0;
+        bool known = k == "-" || k.empty();
+        if (k == "R.A") s.c.primary[1] = known = true;
+        if (k == "R.B") s.c.secondary[1] = known = true;
+        if (k == "L.X") s.c.primary[0] = known = true;
+        if (k == "L.Y") s.c.secondary[0] = known = true;
+        if (k == "R.CLICK") s.c.stickClick[1] = known = true;
+        if (k == "L.CLICK") s.c.stickClick[0] = known = true;
+        if (k == "MENU") s.c.menu = known = true;
+        if (k == "R.TRIG") s.c.trigger[1] = 1.f, known = true;
+        if (k == "L.TRIG") s.c.trigger[0] = 1.f, known = true;
+        if (k == "R.GRIP") s.c.grip[1] = 1.f, known = true;
+        if (k == "L.GRIP") s.c.grip[0] = 1.f, known = true;
+        if (sscanf_s(k.c_str(), "R.SX=%f", &v) == 1) s.c.stickX[1] = v, known = true;
+        if (sscanf_s(k.c_str(), "R.SY=%f", &v) == 1) s.c.stickY[1] = v, known = true;
+        if (sscanf_s(k.c_str(), "L.SX=%f", &v) == 1) s.c.stickX[0] = v, known = true;
+        if (sscanf_s(k.c_str(), "L.SY=%f", &v) == 1) s.c.stickY[0] = v, known = true;
+        if (k == "AIM") s.aim = known = true;
+        if (!known) return false;
+    }
+    return true;
+}
+
+// Loads JWE3VR_vr.txt when it appears and, while a script plays, puts its step into c (and the poses into snap).
+static void VrScriptTick(Controls& c, rig::XrSnapshot& snap) {
+    ULONGLONG now = GetTickCount64();
+    if (now - g_vrCheck > 500) {
+        g_vrCheck = now;
+        std::wstring path = ModuleDir() + L"JWE3VR_vr.txt";
+        FILE* f = nullptr;
+        if (_wfopen_s(&f, path.c_str(), L"r") == 0 && f) {
+            std::vector<VrStep> steps;
+            char buf[512];
+            int bad = 0;
+            while (fgets(buf, sizeof(buf), f)) {
+                std::string line = buf;
+                while (!line.empty() && (line.back() == '\n' || line.back() == '\r' || line.back() == ' ')) line.pop_back();
+                if (line.empty() || line[0] == '#') continue;
+                VrStep s;
+                if (ParseVrStep(line, s)) steps.push_back(s);
+                else ++bad, LOGW("debug: VR controller script line not understood: %s", line.c_str());
+            }
+            fclose(f);
+            DeleteFileW(path.c_str());
+            g_vrScript = std::move(steps);
+            g_vrStep = 0;
+            g_vrStepAt = now;
+            LOGI("debug: VR controller script loaded, %zu steps (%d lines skipped)", g_vrScript.size(), bad);
+        }
+    }
+    while (g_vrStep < g_vrScript.size() && now - g_vrStepAt >= g_vrScript[g_vrStep].ms) {
+        g_vrStepAt += g_vrScript[g_vrStep].ms;
+        if (++g_vrStep == g_vrScript.size()) {
+            LOGI("debug: VR controller script finished");
+            g_vrScript.clear();
+            g_vrStep = 0;
+        }
+    }
+    if (g_vrScript.empty()) return;
+    const VrStep& s = g_vrScript[g_vrStep];
+    c = s.c;
+    c.active[0] = c.active[1] = true;
+    if (s.aim && snap.head.valid) {
+        for (int h = 0; h < 2; ++h) {
+            snap.aim[h] = snap.grip[h] = snap.head;
+            std::lock_guard<std::mutex> l(g_ctrlLock);
+            g_rawAim[h] = {snap.rawHead, true};
+        }
+    }
+}
+
 static void SyncControls(XrTime t, rig::XrSnapshot& snap) {
     XrActiveActionSet as{g_set, XR_NULL_PATH};
     XrActionsSyncInfo si{XR_TYPE_ACTIONS_SYNC_INFO};
@@ -374,6 +479,7 @@ static void SyncControls(XrTime t, rig::XrSnapshot& snap) {
     gi.action = g_menu;
     XrActionStateBoolean b{XR_TYPE_ACTION_STATE_BOOLEAN};
     if (XR_SUCCEEDED(xrGetActionStateBoolean(g_session, &gi, &b))) c.menu = b.currentState;
+    VrScriptTick(c, snap);
 
     std::deque<HapticRequest> pending;
     {

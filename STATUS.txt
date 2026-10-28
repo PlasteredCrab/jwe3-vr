@@ -1,6 +1,29 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.26  Scripted VR controllers: the mod's controller layer tested at last (runs 102-108)
+    - New debug input JWE3VR_vr.txt (re/remote/vrstep.sh): VR controller buttons, triggers, grips, sticks and an AIM
+      step (both hands point where the headset looks) replace the runtime's controller state, which is empty while
+      nobody wears the headset. Everything downstream runs as with real controllers: the Lua controls, the virtual
+      pad, the laser. This is the first time any of the controller mapping ran in JWE3.
+    - Seen working with it: jeep - dominant stick click -> photo mode, B twice -> back to the driver's seat,
+      off-hand Y -> gun seat (gunner hidden), dominant B -> driver's seat (gunner shown); walking - off-hand stick
+      walks, holding dominant B leaves (twice), and entering again does not leave by itself (the 0.0.23 fix);
+      park overview - off-hand Y raises and lowers the tablet, laser + trigger posts a click to the game window.
+    - Bug found and fixed: the menu button did nothing in the park overview (and on the tablet or flat screen) -
+      the virtual pad is off there so the laser and grab work, and that silenced the menu button too. It is now
+      passed through alone as pad START (BACK with the off-hand grip). Once the pause menu is open, the controllers
+      drive it as a pad (A select, B back - B resumes -, sticks) for as long as the game stays paused (its time step
+      is 0; the VR manager keeps ticking): seen - menu -> OPTIONS on the HUD panel, B -> resumed, then "controllers
+      back to the park".
+    - Bug found and fixed: hold and pulse timers used the game's time step, which JWE3 clamps to 1/15 s on slow
+      frames (api.time.GetDeltaTimeUnscaled is clamped too). At the remote 2-4 fps a 3 s hold of dominant B
+      counted as 0.6 s and walking never left; at a smooth 90 fps it would have worked, but any stutter stretched
+      it. The bridge now returns wall-clock seconds with the controls (OpControls, 10th value) and the controls
+      time holds, pulses, the ranger cooldown and the pause grace with it: the hold now leaves at 1.0 s.
+    - Not covered by the script: real controller tracking (AIM only copies the head pose), haptics, the steering
+      wheel, gun aim by hand, and anything the eye sees in the headset.
+
 2026-10-27  Handover after the unattended runs (0.0.9 - 0.0.25, remote runs 59-101, headset never worn)
     - Seen working without the headset on: the VR rig on the rendered frame in the park overview, the jeep and
       helicopter seats, both gun seats (gunner body hidden), photo mode (jeep) and the guest view (walking);

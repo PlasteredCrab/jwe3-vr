@@ -64,8 +64,11 @@ end
 
 JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
     if not self.bReady then return end
-    -- JWE3 environments pass only the (scaled) delta time to the Advance phase.
+    -- JWE3 environments pass only the (scaled) delta time to the Advance phase. It is clamped to 1/15 s on slow
+    -- frames (and api.time.GetDeltaTimeUnscaled is too, run 106), so the controls time their holds with the
+    -- bridge's wall clock instead (Gameplay.Advance).
     _nUnscaledDeltaTime = _nUnscaledDeltaTime or _nDeltaTime or 0
+    self.nLastDt = _nDeltaTime
     -- Diagnostics for the first JWE3 runs (all protected: an error here must not stop Advance).
     if not self.bFirstAdvanceLogged then
         self.bFirstAdvanceLogged = true
@@ -91,6 +94,7 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
             local cmm = bW and global.type(tWorld) == "table" and tWorld.CameraModeManager or nil
             local sCmm = global.type(cmm)
             local sEntities = sCmm == "table" and global.type(global.rawget(cmm, "tEntities")) or "n/a"
+            Bridge.Text("time step: game " .. tostring(self.nLastDt) .. " s")
             Bridge.Text("camera diag: driven via " .. tostring(Camera.sDrivenVia or "the VR manager") .. " (" ..
                         tostring(Camera.nInstanceTicks) .. " camera-manager ticks), mode " ..
                         tostring(Camera.sMode) .. "; world CameraModeManager is " .. sCmm .. ", tEntities " .. sEntities ..
@@ -107,7 +111,7 @@ JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)
             self.bHooksDone = require("JWE3VR.Hooks").SweepPending()
         end
     end
-    local bOk, sErr = pcall(Gameplay.Advance, _nUnscaledDeltaTime)
+    local bOk, sErr = pcall(Gameplay.Advance, _nUnscaledDeltaTime, _nDeltaTime)
     if not bOk and not self.bErrorLogged then
         self.bErrorLogged = true
         api.debug.Trace("JWE3VR gameplay: " .. tostring(sErr))

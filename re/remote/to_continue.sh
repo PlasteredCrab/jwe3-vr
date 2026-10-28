@@ -7,7 +7,8 @@ run="${1:-run}"
 taskkill //IM JWE3.exe >/dev/null 2>&1
 for i in $(seq 1 15); do tasklist //FI "IMAGENAME eq JWE3.exe" 2>/dev/null | grep -qi jwe3.exe || break; sleep 1; done
 if tasklist //FI "IMAGENAME eq JWE3.exe" 2>/dev/null | grep -qi jwe3.exe; then
-  echo "still running after a close request (in a park); ending it"; taskkill //F //IM JWE3.exe >/dev/null 2>&1; sleep 3
+  echo "still running after a close request (in a park); ending it"; taskkill //F //IM JWE3.exe >/dev/null 2>&1
+  for i in $(seq 1 15); do tasklist //FI "IMAGENAME eq JWE3.exe" 2>/dev/null | grep -qi jwe3.exe || break; sleep 1; done
 fi
 tasklist //FI "IMAGENAME eq JWE3.exe" 2>/dev/null | grep -qi jwe3.exe && { echo "would not close; stopping"; exit 1; }
 rm -f "$D/JWE3VR_pad.txt" "$D/JWE3VR_shot.req"

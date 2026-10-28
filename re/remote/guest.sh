@@ -14,13 +14,14 @@ py() { "/e/Modding/tools/cobra-tools/.venv/Scripts/python" -E -c "$1"; }
 pixel() { py "
 from PIL import Image
 print(*Image.open(r'E:/Modding/Jurassic Park Evolution 3 VR/re/work/$1.png').convert('RGB').getpixel(($2, $3)))"; }
-# The dropper's "SELECT START LOCATION" label: a dark box in the middle of the view with light text in it.
+# The dropper is up: the left toolbar (a dark strip at the left edge) is gone. Its "SELECT START LOCATION" label
+# follows the cursor, so it is not looked for (run 104: bottom right).
 dropper() { py "
 import numpy as np
 from PIL import Image
-a = np.asarray(Image.open(r'E:/Modding/Jurassic Park Evolution 3 VR/re/work/$1.png').convert('L'), dtype=np.float32)
-box = a[272:290, 500:600]
-print('yes' if box.mean() < 90 and box.max() > 180 else 'no')"; }
+im = np.asarray(Image.open(r'E:/Modding/Jurassic Park Evolution 3 VR/re/work/$1.png').convert('RGB'), dtype=np.float32)
+strip = im[40:340, 2:22]
+print('yes' if strip.mean() > 70 else 'no')"; }
 mod() { sed -i "s/^Enabled = [01]/Enabled = $1/" "$D/JWE3VR.ini"; sleep 5; }
 stop() { echo "$1; stopping (look at re/work/$2.png)"; mod 1; exit 1; }
 

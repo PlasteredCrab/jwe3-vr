@@ -293,14 +293,21 @@ Gameplay.SetHud = function(bShow)
     if api.render and api.render.SetShouldRenderGUI then api.render.SetShouldRenderGUI(bShow) end
 end
 
-Gameplay.Advance = function(_nDt)
+Gameplay.Advance = function(_nDt, _nGameDt)
     if not Bridge.IsLoaded() then return end
     local nDebug = Bridge.DebugCommand()
     if nDebug == 1 or nDebug == 2 then
         local bOk, sErr = pcall(Gameplay.DebugDrive, nDebug == 2)
         if not bOk then Bridge.Text("debug drive failed: " .. tostring(sErr)) end
     end
-    local tl, tr, gl, gr, sxl, syl, sxr, syr, nBits = Bridge.Controls()
+    local tl, tr, gl, gr, sxl, syl, sxr, syr, nBits, nNow = Bridge.Controls()
+    -- Hold and pulse timers run on the wall clock: the game's time step is clamped to 1/15 s on slow frames and
+    -- stops while paused (run 106: a 3 s hold of dominant B counted as 0.6 s at 3 fps and never left walking).
+    if nNow then
+        local nReal = Gameplay.nLastNow and (nNow - Gameplay.nLastNow) or nil
+        Gameplay.nLastNow = nNow
+        if nReal and nReal >= 0 and nReal < 1 then _nDt = nReal end
+    end
     nBits = math.floor(nBits or 0)
     local dom = Gameplay.nDominant
     local tPrev = Gameplay.tPrev
@@ -330,13 +337,28 @@ Gameplay.Advance = function(_nDt)
     if Pressed(secondaryOff) and bImmersive and (not bVehicle or bTabletChord) then
         Gameplay.bTablet = not Gameplay.bTablet
         if Gameplay.bTablet then Bridge.PlaceScreen() end
+        Bridge.Text("tablet " .. (Gameplay.bTablet and "up" or "away"))
     end
     if not bImmersive then Gameplay.bTablet = false end
 
     local nPad, bTurn, bLaser, bGrab = Bridge.Pad.Off, false, false, false
     local nMask, lx, ly, rx, ry, nButtons = 0, 0, 0, 0, 0, 0
 
-    if Gameplay.bTablet then
+    -- The pause menu, opened with the menu button where the pad is otherwise off (below): while the game stays
+    -- paused (its scaled time step is 0; the VR manager still ticks), the controllers drive the menu as a pad -
+    -- A selects, B backs out and resumes, the sticks move - as in the seats. The laser on the HUD panel still clicks.
+    Gameplay.nMenuGrace = math.max(0, (Gameplay.nMenuGrace or 0) - (_nDt or 0))
+    if Gameplay.bMenuPause and (_nGameDt or 0) > 0 and Gameplay.nMenuGrace == 0 then
+        Gameplay.bMenuPause = false
+        Bridge.Text("pause menu: the game runs again; controllers back to the park")
+    end
+
+    if Gameplay.bMenuPause then
+        nPad = Bridge.Pad.Passthrough
+        nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
+        nMask = Ov.Buttons
+        Bridge.Pointer(nil)
+    elseif Gameplay.bTablet then
         -- Pointing at the tablet drives the mouse (native side); keep the pad quiet.
         nPad = Bridge.Pad.Off
         Bridge.Pointer(nil)
@@ -362,6 +384,7 @@ Gameplay.Advance = function(_nDt)
             -- view), not a synthetic Escape key: the mod sends no OS-level input. A pulse of at least 0.25 s and
             -- 3 game ticks, so a slow frame cannot swallow it.
             Gameplay.bEscSent, Gameplay.nBackPulse, Gameplay.nBackTicks = true, 0.25, 3
+            Bridge.Text("walking: dominant B held " .. global.string.format("%.1f", Gameplay.nBHeld) .. " s, pad B to leave")
         elseif not bHeld then
             Gameplay.bEscSent = false
         end
@@ -416,6 +439,20 @@ Gameplay.Advance = function(_nDt)
             pcall(Gameplay.SwitchAmmo, stickOffX > 0)
         elseif math.abs(stickOffX) < 0.3 then
             tPrev.ammoLatch = false
+        end
+    end
+
+    -- The menu button reaches the game everywhere. Where the pad is otherwise off (park overview, tablet, flat
+    -- screen), it alone is passed through - pad START, or BACK with the off-hand grip - with everything else at rest
+    -- (seen with the scripted controllers, run 102: before, the menu button did nothing in the park overview).
+    if nPad == Bridge.Pad.Off and Has(nBits, Btn.Menu) then
+        nPad = Bridge.Pad.Passthrough
+        nMask, lx, ly, rx, ry = Ov.LX + Ov.LY + Ov.RX + Ov.RY + Ov.LT + Ov.RT + Ov.Buttons, 0, 0, 0, 0
+        nButtons = (gripOff > 0.6) and 0x0020 or 0x0010 -- XINPUT_GAMEPAD_BACK / START
+        -- The game pauses a frame or two later: give it a second before the time step says it did not.
+        if gripOff <= 0.6 and not Gameplay.bMenuPause then
+            Gameplay.bMenuPause, Gameplay.nMenuGrace = true, 1.0
+            Bridge.Text("pause menu: menu button passed to the game; the controllers drive the menu while it is paused")
         end
     end
 

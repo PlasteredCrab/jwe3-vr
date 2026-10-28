@@ -81,8 +81,9 @@ Bridge.Hand = function(nHand)
 end
 
 -- Returns trigL, trigR, gripL, gripR, sxL, syL, sxR, syR, buttonBits
+-- trigL, trigR, gripL, gripR, sxL, syL, sxR, syR, button bits, wall-clock seconds
 Bridge.Controls = function()
-    if not vr then return 0, 0, 0, 0, 0, 0, 0, 0, 0 end
+    if not vr then return 0, 0, 0, 0, 0, 0, 0, 0, 0, nil end
     return vr(Op.Controls)
 end
 

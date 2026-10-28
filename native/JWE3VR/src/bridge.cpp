@@ -20,7 +20,7 @@ enum Op : int {
     OpStatus = 0,      // () -> protocol, xrRunning, enabled, stereoMode
     OpTick = 1,        // (kind, dt, pos3, R3, U3, F3) -> override, pos3, F3, U3, fovY
     OpHand = 2,        // (hand) -> valid, origin3, forward3, up3
-    OpControls = 3,    // () -> trigL, trigR, gripL, gripR, sxL, syL, sxR, syR, buttonBits
+    OpControls = 3,    // () -> trigL, trigR, gripL, gripR, sxL, syL, sxR, syR, buttonBits, seconds (wall clock)
     OpFlags = 4,       // (padMode, turn, laser, grab, tablet)
     OpPad = 5,         // (mask, lx, ly, rx, ry, lt, rt, buttons)
     OpHaptic = 6,      // (hand, amplitude, seconds, frequency)
@@ -187,6 +187,10 @@ static int Dispatch(uint8_t* L) {
         s.Push(c.stickX[1]);
         s.Push(c.stickY[1]);
         s.Push((float)bits);
+        // Wall-clock seconds since the DLL started: the game's time step is clamped to 1/15 s on slow frames, so
+        // hold timers measured with it ran slow (run 106: a 3 s hold counted as 0.6 s at 3 fps).
+        static const ULONGLONG start = GetTickCount64();
+        s.Push((float)((GetTickCount64() - start) / 1000.0));
         break;
     }
     case OpFlags: {
