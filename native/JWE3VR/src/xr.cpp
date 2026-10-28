@@ -27,6 +27,9 @@ struct Swap {
     UINT width = 0, height = 0;
     DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
     bool acquired = false;
+    bool released = false;    // an image was released this frame (a layer may name the swapchain)
+    bool waitPending = false; // acquired, but its wait timed out: wait for pendingIdx again next frame
+    uint32_t pendingIdx = 0;
 };
 
 struct HapticRequest {
@@ -805,12 +808,31 @@ bool EnsureHudSwapchain(UINT width, UINT height, DXGI_FORMAT format) {
 ID3D12Resource* AcquireImage(SwapId id) {
     Swap& s = g_swaps[(int)id];
     if (!s.handle) return nullptr;
-    uint32_t idx = 0;
-    XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
-    if (!Ok(xrAcquireSwapchainImage(s.handle, &ai, &idx), "xrAcquireSwapchainImage")) return nullptr;
+    uint32_t idx = s.pendingIdx;
+    if (!s.waitPending) {
+        XrSwapchainImageAcquireInfo ai{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+        if (!Ok(xrAcquireSwapchainImage(s.handle, &ai, &idx), "xrAcquireSwapchainImage")) return nullptr;
+    }
+    // A bounded wait (three sessions on 28 Oct ended with the game not responding, each after the headset session
+    // left FOCUSED: behind a locked screen or while SteamVR shut down; this wait was infinite and runs inside the
+    // game's Present). On a timeout the image stays acquired and the next frame waits for it again, as OpenXR
+    // requires; until then the layers naming this swapchain are left out.
     XrSwapchainImageWaitInfo wi{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
-    wi.timeout = XR_INFINITE_DURATION;
-    if (!Ok(xrWaitSwapchainImage(s.handle, &wi), "xrWaitSwapchainImage")) {
+    wi.timeout = 100'000'000; // 100 ms
+    XrResult wr = xrWaitSwapchainImage(s.handle, &wi);
+    if (wr == XR_TIMEOUT_EXPIRED) {
+        if (!s.waitPending) {
+            static std::atomic<int> logged{0};
+            if (logged.fetch_add(1) < 20)
+                LOGI("OpenXR: swapchain %d's image not ready after 100 ms (the compositor is not taking frames); its "
+                     "layers are left out until it is", (int)id);
+        }
+        s.waitPending = true;
+        s.pendingIdx = idx;
+        return nullptr;
+    }
+    s.waitPending = false;
+    if (!Ok(wr, "xrWaitSwapchainImage")) {
         XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
         xrReleaseSwapchainImage(s.handle, &ri); // never leave it acquired, or every later acquire fails
         return nullptr;
@@ -825,11 +847,17 @@ void ReleaseImage(SwapId id) {
     XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     xrReleaseSwapchainImage(s.handle, &ri);
     s.acquired = false;
+    s.released = true;
 }
 
 static XrRect2Di FullRect(const Swap& s) { return {{0, 0}, {(int32_t)s.width, (int32_t)s.height}}; }
 
 void EndFrame(const EyeView eyes[2], const Layers& in) {
+    struct ClearReleased {
+        ~ClearReleased() {
+            for (Swap& s : g_swaps) s.released = false;
+        }
+    } clearReleased; // a release counts for the frame it happened in
     if (!g_frameBegun) return;
     g_frameBegun = false;
 
@@ -844,12 +872,15 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
     uint32_t layerCount = 0;
     bool showProjection = in.projection, showScreen = in.screen;
 
-    bool eyesOk = showProjection && eyes[0].valid && eyes[1].valid && g_swaps[0].handle && g_frame.shouldRender;
+    bool eyesOk = showProjection && eyes[0].valid && eyes[1].valid && g_swaps[0].handle && g_frame.shouldRender &&
+                  g_swaps[0].released && g_swaps[1].released;
+    showScreen = showScreen && g_swaps[2].released;
     if (showProjection && !eyesOk) {
         static std::atomic<int> logged{0};
         if (logged.fetch_add(1) < 5)
-            LOGI("EndFrame: eye images asked for but not sent (eye views valid %d/%d, swapchain %d, shouldRender %d)",
-                 (int)eyes[0].valid, (int)eyes[1].valid, g_swaps[0].handle != XR_NULL_HANDLE, (int)g_frame.shouldRender);
+            LOGI("EndFrame: eye images asked for but not sent (eye views valid %d/%d, swapchain %d, shouldRender %d, "
+                 "released this frame %d/%d)", (int)eyes[0].valid, (int)eyes[1].valid, g_swaps[0].handle != XR_NULL_HANDLE,
+                 (int)g_frame.shouldRender, (int)g_swaps[0].released, (int)g_swaps[1].released);
     }
     if (eyesOk) {
         for (int i = 0; i < 2; ++i) {

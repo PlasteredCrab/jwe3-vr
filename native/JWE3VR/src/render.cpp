@@ -893,11 +893,51 @@ static void LogFrameStats(ULONGLONG waitMs) {
     }
 }
 
+// Watchdog (three sessions on 28 Oct ended with JWE3 reported "not responding", each after the OpenXR session had
+// left FOCUSED): a thread of ours notes, twice a second, whether the game window has stopped answering or a frame has
+// spent more than 3 s in the Present hook, and logs which step the frame is in. It only reads; nothing is sent.
+static std::atomic<ULONGLONG> g_presentAt{0}, g_presentEndAt{0};
+static std::atomic<const char*> g_stage{"-"};
+static std::atomic<HWND> g_watchHwnd{nullptr};
+static void Stage(const char* s) { g_stage.store(s, std::memory_order_relaxed); }
+
+static DWORD WINAPI WatchdogThread(LPVOID) {
+    bool reported = false;
+    ULONGLONG since = 0, lastLine = 0;
+    for (;;) {
+        Sleep(500);
+        ULONGLONG now = GetTickCount64(), at = g_presentAt.load(), end = g_presentEndAt.load();
+        HWND h = g_watchHwnd.load();
+        bool hung = h && IsHungAppWindow(h);
+        bool stuck = at && now - at > 3000;
+        if (!hung && !stuck) {
+            if (reported) LOGI("watchdog: the game responds again after %.1f s", (now - since) / 1000.0);
+            reported = false;
+            continue;
+        }
+        if (reported && now - lastLine < 10000) continue;
+        if (!reported) since = now;
+        reported = true;
+        lastLine = now;
+        char where[160];
+        if (at) snprintf(where, sizeof(where), "a frame has been in the Present hook for %.1f s, at: %s", (now - at) / 1000.0,
+                         g_stage.load());
+        else snprintf(where, sizeof(where), "no frame is in the Present hook (the last one left %.1f s ago, after: %s)",
+                      end ? (now - end) / 1000.0 : -1.0, g_stage.load());
+        LOGE("watchdog: %s; %s; OpenXR state %d", hung ? "the game window is not responding" : "the window still answers",
+             where, xr::SessionState());
+    }
+}
+
 static void OnPresent(IDXGISwapChain* sc) {
     if (!g_device) {
         if (FAILED(sc->GetDevice(IID_PPV_ARGS(&g_device)))) return;
         DXGI_SWAP_CHAIN_DESC d{};
-        if (SUCCEEDED(sc->GetDesc(&d))) input::SetGameWindow(d.OutputWindow);
+        if (SUCCEEDED(sc->GetDesc(&d))) {
+            input::SetGameWindow(d.OutputWindow);
+            g_watchHwnd = d.OutputWindow;
+        }
+        if (HANDLE t = CreateThread(nullptr, 0, WatchdogThread, nullptr, 0, nullptr)) CloseHandle(t);
     }
     if (!g_queue) {
         g_queue = g_swapQueue.load();
@@ -1007,6 +1047,7 @@ static void OnPresent(IDXGISwapChain* sc) {
     if (!bb) return;
 
     D3D12_RESOURCE_DESC d = bb->GetDesc();
+    Stage("OpenXR swapchains");
     bool haveSwaps = xr::EnsureSwapchains((UINT)d.Width, d.Height, d.Format);
     float aspect = (float)d.Width / (float)d.Height;
 
@@ -1071,6 +1112,7 @@ static void OnPresent(IDXGISwapChain* sc) {
                 b->Release();
             }
         }
+    Stage("render passes");
     passes::OnPresent(fi);
     // The HUD panel's swapchain follows the UI texture (size and format); no redirect until it exists.
     bool hudReady = false;
@@ -1080,6 +1122,7 @@ static void OnPresent(IDXGISwapChain* sc) {
     }
     passes::SetHudOutputReady(hudReady);
 
+    Stage("eye images (copy into SteamVR's images)");
     if (immersive) {
         vm::Fov fov = vm::SymmetricFov(req.fovY, aspect);
         if (cfg.stereo == StereoMode::Sync && viewcb::TakeLeftCaptured()) {
@@ -1161,10 +1204,13 @@ static void OnPresent(IDXGISwapChain* sc) {
         }
     }
 
+    Stage("xrEndFrame");
     xr::EndFrame(g_views, layers);
+    Stage("input");
     input::OnFrame(screen, layers.hud, screen && !g_tablet.load());
     viewcb::OnPresent();
     ULONGLONG waitStart = GetTickCount64();
+    Stage("xrWaitFrame / xrBeginFrame");
     xr::BeginFrame();
     LogFrameStats(GetTickCount64() - waitStart);
     bb->Release();
@@ -1176,8 +1222,13 @@ static UINT SyncInterval(UINT sync) { return (xr::Running() && config::Get().for
 static HRESULT STDMETHODCALLTYPE Hk_Present(IDXGISwapChain* sc, UINT sync, UINT flags) {
     if (!t_inPresent && !(flags & DXGI_PRESENT_TEST)) {
         t_inPresent = true;
+        g_presentAt = GetTickCount64();
+        Stage("the mod's frame work");
         OnPresent(sc);
+        Stage("the game's own Present (DXGI)");
         HRESULT hr = o_Present(sc, SyncInterval(sync), flags);
+        g_presentAt = 0;
+        g_presentEndAt = GetTickCount64();
         t_inPresent = false;
         return hr;
     }
@@ -1187,8 +1238,13 @@ static HRESULT STDMETHODCALLTYPE Hk_Present(IDXGISwapChain* sc, UINT sync, UINT 
 static HRESULT STDMETHODCALLTYPE Hk_Present1(IDXGISwapChain1* sc, UINT sync, UINT flags, const DXGI_PRESENT_PARAMETERS* p) {
     if (!t_inPresent && !(flags & DXGI_PRESENT_TEST)) {
         t_inPresent = true;
+        g_presentAt = GetTickCount64();
+        Stage("the mod's frame work");
         OnPresent(sc);
+        Stage("the game's own Present (DXGI)");
         HRESULT hr = o_Present1(sc, SyncInterval(sync), flags, p);
+        g_presentAt = 0;
+        g_presentEndAt = GetTickCount64();
         t_inPresent = false;
         return hr;
     }

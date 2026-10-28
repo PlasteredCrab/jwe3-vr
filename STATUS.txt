@@ -1,6 +1,20 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.56  No unbounded wait inside the game's Present; a watchdog for hangs
+    - Three sessions today ended with JWE3 reported "not responding" (12:41, 12:58, 13:32), each after the OpenXR
+      session had left FOCUSED (headset off, the screen locked, SteamVR shutting down). The one unbounded wait the mod
+      makes inside the game's Present was xrWaitSwapchainImage with XR_INFINITE_DURATION: if the compositor stops
+      taking frames, that never returns. It now waits 100 ms; on XR_TIMEOUT_EXPIRED the image stays acquired and the
+      next frame waits for it again (as OpenXR requires), and a layer is sent only if its swapchain released an image
+      that frame (both eyes for the projection layer, the flat screen's for its quad). xrWaitFrame can still block;
+      the runtime paces with it.
+    - Watchdog: a thread of ours checks twice a second whether the game window is hung (IsHungAppWindow) or a frame
+      has spent over 3 s in the Present hook, and logs "watchdog: ..." with the step the frame is in (stage markers:
+      swapchains, render passes, eye images, xrEndFrame, input, xrWaitFrame / xrBeginFrame, the game's own Present)
+      and the OpenXR state, again every 10 s while it lasts. It sends nothing. Not yet run (SteamVR is off; a remote
+      run would not reach the frame code).
+
 2026-10-28  0.0.55  The site map takes the sticks
     - The user's second VR View recording (E:\Videos6-10-28 13-21-32.mov, 10 min): the park from above, the
       guest walk among Gallimimus, a T. rex and Parasaurolophus, the site map, then driving a jeep. On the map
