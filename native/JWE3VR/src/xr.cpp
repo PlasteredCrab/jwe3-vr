@@ -336,12 +336,16 @@ static void PollEvents() {
 //   R.TRIG L.TRIG        triggers fully pulled                       R.GRIP L.GRIP     grips fully squeezed
 //   R.SX= R.SY= L.SX= L.SY=   sticks, -1..1
 //   AIM                  both hands' aim and grip poses at the head (the laser points where the headset looks)
+//   AIM=HUD:u,v          both hands at the head, pointing at point u,v of the in-world HUD panel (0..1, from the
+//                        top left)
 //   -                    nothing
 // While it plays it replaces the runtime's controller state; the file is consumed when read. Everything downstream
 // (the Lua controls, the virtual pad, the laser) runs as with real controllers.
 struct VrStep {
     Controls c;
     bool aim = false;
+    bool aimHud = false;
+    float hudU = 0.5f, hudV = 0.5f;
     ULONGLONG ms = 0;
 };
 static std::vector<VrStep> g_vrScript;
@@ -377,6 +381,7 @@ static bool ParseVrStep(const std::string& line, VrStep& s) {
         if (sscanf_s(k.c_str(), "L.SX=%f", &v) == 1) s.c.stickX[0] = v, known = true;
         if (sscanf_s(k.c_str(), "L.SY=%f", &v) == 1) s.c.stickY[0] = v, known = true;
         if (k == "AIM") s.aim = known = true;
+        if (sscanf_s(k.c_str(), "AIM=HUD:%f,%f", &s.hudU, &s.hudV) == 2) s.aimHud = known = true;
         if (!known) return false;
     }
     return true;
@@ -426,6 +431,30 @@ static void VrScriptTick(Controls& c, rig::XrSnapshot& snap) {
             snap.aim[h] = snap.grip[h] = snap.head;
             std::lock_guard<std::mutex> l(g_ctrlLock);
             g_rawAim[h] = {snap.rawHead, true};
+        }
+    }
+    Vec3 hc, hr, hu;
+    float hw = 0, hh = 0;
+    if (s.aimHud && snap.head.valid && HudRect(hc, hr, hu, hw, hh)) {
+        // From the head to the panel point (raw stage space, where the panel and the laser's ray test live).
+        Vec3 target = hc + hr * ((s.hudU - 0.5f) * 2.f * hw) + hu * ((0.5f - s.hudV) * 2.f * hh);
+        Vec3 back = Normalize(snap.rawHead.p - target);
+        Vec3 right = Normalize(Cross({0, 1, 0}, back));
+        if (Length(right) < 1e-3f) right = {1, 0, 0};
+        Pose aim{QuatFromBasis(right, Cross(back, right), back), snap.rawHead.p};
+        static bool logged = false;
+        if (!logged) {
+            logged = true;
+            float cu = -1, cv = -1, ct = 0;
+            bool hit = RayRect(aim.p, Rotate(aim.q, {0, 0, -1}), hc, hr, hu, hw, hh, cu, cv, ct);
+            LOGI("debug: AIM=HUD panel centre (%.2f %.2f %.2f) half %.2f x %.2f, head (%.2f %.2f %.2f); aimed %.3f,%.3f -> "
+                 "ray hits %d at %.3f,%.3f",
+                 hc.x, hc.y, hc.z, hw, hh, snap.rawHead.p.x, snap.rawHead.p.y, snap.rawHead.p.z, s.hudU, s.hudV, hit ? 1 : 0, cu, cv);
+        }
+        for (int h = 0; h < 2; ++h) {
+            snap.aim[h] = snap.grip[h] = snap.head;
+            std::lock_guard<std::mutex> l(g_ctrlLock);
+            g_rawAim[h] = {aim, true};
         }
     }
 }

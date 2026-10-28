@@ -49,6 +49,14 @@ static ULONGLONG g_lastFrame = 0;
 static std::atomic<bool> g_mouseDown[2]{};
 // The laser's cursor in client pixels, packed as a mouse-message lParam (-1: none yet).
 static std::atomic<LPARAM> g_cursorPt{-1};
+// Where a button went down, and whether the laser has since moved far enough to make it a drag. While a button is
+// held the cursor stays put within kClickSlop pixels: a hand never holds a laser still, and every small move with
+// the button down turned a click into a drag that the game's menus ignored (seen with scripted controllers on the
+// pause menu: the laser's press on RESUME did nothing, a posted click without moves resumed).
+static std::atomic<LPARAM> g_pressPt{-1};
+static std::atomic<bool> g_dragging{false};
+static std::atomic<unsigned> g_heldMoves{0};
+constexpr int kClickSlop = 12;
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -383,7 +391,23 @@ void MouseButton(int button, bool down) {
     button &= 1;
     if (g_mouseDown[button] == down) return;
     if (down && g_cursorPt.load() == -1) return; // no laser point yet
+    if (down && !g_mouseDown[0] && !g_mouseDown[1]) {
+        g_pressPt = g_cursorPt.load();
+        g_dragging = false;
+        // A fresh move right at the press (one pixel over and back): the game's menus took the first press after
+        // pad input only as a switch to the mouse, so one pull of the trigger did nothing (seen on the pause menu).
+        LPARAM pt = g_pressPt.load();
+        if (g_hwnd && pt != -1) {
+            int x = (int)(short)LOWORD(pt), y = (int)(short)HIWORD(pt);
+            PostMessageW(g_hwnd, WM_MOUSEMOVE, MouseKeys(), MAKELPARAM(x + 1, y));
+            PostMessageW(g_hwnd, WM_MOUSEMOVE, MouseKeys(), pt);
+        }
+    }
     g_mouseDown[button] = down;
+    if (!down && g_heldMoves.load()) {
+        JVR_LOG_ONCE("laser: the cursor was held still during a click (%u small moves left out)", g_heldMoves.load());
+        g_heldMoves = 0;
+    }
     if (button == 0) PostMouse(down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
     else PostMouse(down ? WM_RBUTTONDOWN : WM_RBUTTONUP);
     JVR_LOG_ONCE("laser: first %s press posted to the game window", button == 0 ? "left" : "right");
@@ -402,6 +426,15 @@ static void CursorToUV(float u, float v) {
     if (!g_hwnd || !GetClientRect(g_hwnd, &rc)) return;
     int x = (int)(std::clamp(u, 0.f, 1.f) * (rc.right - 1)), y = (int)(std::clamp(v, 0.f, 1.f) * (rc.bottom - 1));
     LPARAM pt = MAKELPARAM(x, y);
+    if ((g_mouseDown[0] || g_mouseDown[1]) && !g_dragging) {
+        LPARAM pp = g_pressPt.load();
+        int dx = x - (int)(short)LOWORD(pp), dy = y - (int)(short)HIWORD(pp);
+        if (dx * dx + dy * dy <= kClickSlop * kClickSlop) {
+            if (pt != g_cursorPt.load()) ++g_heldMoves;
+            return; // a click, not a drag: the cursor stays where the button went down
+        }
+        g_dragging = true;
+    }
     if (g_cursorPt.exchange(pt) == pt) return;
     PostMouse(WM_MOUSEMOVE);
 }
@@ -472,7 +505,10 @@ void OnFrame(bool screenVisible, bool hudVisible) {
     if (screenVisible) pointing = ScreenPointer(dom, dt);
     // The in-world HUD takes the pointer when the laser is on (park overview) and pointing at it: UI first,
     // then the park. In seats, guns and walking the trigger belongs to the game, so the HUD is look-only.
-    if (!pointing && hudVisible && f.laser) pointing = ScreenPointer(dom, dt, true);
+    if (!pointing && hudVisible && f.laser) {
+        pointing = ScreenPointer(dom, dt, true);
+        if (pointing) JVR_LOG_ONCE("laser: pointing at the in-world HUD panel");
+    }
     if (f.laser && !screenVisible && !pointing) {
         // The game picks with its own cursor ray; Lua replaces that ray with the hand's, and the OS cursor
         // follows a far point on the laser so 2D UI under it reacts too.

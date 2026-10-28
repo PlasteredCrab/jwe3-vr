@@ -386,6 +386,7 @@ Gameplay.Advance = function(_nDt, _nGameDt)
         nPad = Bridge.Pad.Passthrough
         nButtons = Gameplay.PadButtons(nBits, gl, gr, dom)
         nMask = Ov.Buttons
+        bLaser = true -- the HUD panel takes the laser (native side); no park pointer behind the menu
         Bridge.Pointer(nil)
     elseif Gameplay.bTablet then
         -- Pointing at the tablet drives the mouse (native side); keep the pad quiet.
