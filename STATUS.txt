@@ -2,6 +2,12 @@ JWE3 VR - status log (newest first)
 ===================================
 
 2026-10-28  0.0.54  Laser clicks also as raw input; DLAA and Maximum geometry set for the user
+    - SEEN WORKING (user, in the headset, 13:20): the trigger opened WORKSHOP and loaded a downloaded park, no mouse
+      ("Yes, trigger only"). Log: every laser press and release was read by the game's GetRawInputData (the +1/-1
+      nudges, then buttons 0x1 / 0x2); 19 laser presses, 20 WM_LBUTTONDOWN at the window. Park: 33-34 fps with DLAA +
+      Maximum geometry (37 with FXAA / High), present gaps 29 ms +- 5-7 ms, every present with a new tick's camera
+      (pairing 1:1, nothing repeated or skipped), eye FOV L-58 R58 U45 D-45 (the 90 degree cap). Tablet / HUD-panel
+      clicks in the park: four presses on the bottom bar at 13:25:41-49, effect not reported yet.
     - Why the trigger never clicked WORKSHOP / SETTINGS (hover worked): JWE3.exe is the only module that reads input
       (no GetKeyState / GetAsyncKeyState anywhere; the UI DLLs import none of it). It registers raw input for the
       keyboard (1/6), the mouse (1/2, legacy messages kept) and generic desktop devices (1/0 page-only), all

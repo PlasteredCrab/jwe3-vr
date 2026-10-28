@@ -7,7 +7,13 @@ Ported from [JWE2 VR](https://github.com/PlasteredCrab/jwe2-vr) (same studio, sa
 
 Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 
-> **Status: first runs in JWE3 (game 1.5.5, build 1792088119), headset not worn.** Seen working in the game: the
+> **Status: first runs in JWE3 (game 1.5.5, build 1792088119); first headset sessions on 2026-10-28 (Quest 2 via
+> Meta Horizon Link and SteamVR).** In the headset, the user saw: the main menu on the flat screen with the laser
+> and pointer dot, the trigger clicking it (WORKSHOP opened and a downloaded park loaded, no mouse; 0.0.54), the park
+> around them with head tracking, the two-grip zoom, and mono view ("looks and feels way better" than alternating-eye
+> stereo, which jittered). A SteamVR VR View recording showed the HUD panel's toolbar and bottom bar. Not yet
+> confirmed in the headset: clicks on the tablet and the HUD panel, the edge-panning fix, and how sharp the 90 degree
+> view looks. Remote runs (headset not worn) showed the rest below. Seen working in the game: the
 > mod loads without a proxy DLL, the Lua bridge and hooks run, OpenXR starts on SteamVR, and in a Sandbox park the
 > VR rig drives the rendered camera (headset FOV, the two eyes' positions, foveated rendering on), the game's UI is
 > moved out of the eye images into the in-world HUD panel's texture, taking direct control of a ranger jeep or the
@@ -19,10 +25,10 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > controllers in a Sandbox park built remotely (paths, response facility, hatchery, enclosure, aviary): the on-foot
 > dart rifle tranquillised a dinosaur (the game's panel: TRANQUILIZED) and the medicine gun cured one, the radio
 > called a jeep (a Fire Flare task in the game's list) and opened the team order screen, and the aviary drone flew,
-> entered its aim mode and tranquillised a Dimorphodon. Not yet seen: head motion
-> and stereo depth in a worn headset, the HUD panel itself in the headset, real VR controllers in your hands (the
-> runs above used scripted ones, and the darts were aimed at the dinosaur by a debug aid), a helicopter or jeep
-> dart landing on a dinosaur, and
+> entered its aim mode and tranquillised a Dimorphodon. Not yet seen: stereo depth that holds still (alternating
+> eyes jittered at ~35 fps), the on-foot tools, vehicles and drone with real VR controllers (the runs above used
+> scripted ones, and the darts were aimed at the dinosaur by a debug aid), a helicopter or jeep dart landing on a
+> dinosaur, and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
