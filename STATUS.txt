@@ -1,6 +1,14 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.29  Radio and send-team say why nobody comes; snap turn checked (run 114)
+    - The radio (walking, A with the radio out) and send-team (overview, B on a spot) only gave a long weak buzz
+      when no vehicle could take orders. They now also log the finder's reason, e.g. run 114: "radio: no ranger
+      jeep to call (tCars: 2 vehicles ..., 0 can take orders (first refusal: reason 2))" - reason 2 is the game's
+      FoundationNotOperational. A successful call is still unseen (the test park's facility is not operational).
+    - Snap turn while walking (dominant stick right, scripted): the view turned about 30 degrees (the peak moved
+      from the middle to the left), and stayed put after.
+
 2026-10-27  0.0.28  Tap and hold of dominant B while walking timed from the press (runs 112-113)
     - Scripted taps of dominant B while walking (the on-foot tool cycle) partly failed at the remote 1.5-3 fps:
       a 0.45 s tap was sometimes missed, and a 0.6 s tap counted as a 1.0 s hold and left walking - adding up tick

@@ -298,9 +298,11 @@ end
 Gameplay.SendTeam = function(bHelicopter)
     local entity, vPos = Gameplay.EntityUnderLaser()
     if not vPos or not Gameplay.iUIMode then return false end
-    local vehicle = Vehicles.FindNearestTeam(vPos, bHelicopter)
+    local vehicle, sWhy = Vehicles.FindNearestTeam(vPos, bHelicopter)
     if not vehicle then
         Bridge.Haptic(Gameplay.nDominant, 0.2, 0.3, 0) -- long weak buzz: nobody free
+        Bridge.Text("send team: no " .. (bHelicopter and "ACU helicopter" or "ranger team") .. " can take orders (" ..
+                    tostring(sWhy) .. ")")
         return false
     end
     Gameplay.iUIMode:OnModeEvent("RequestChangeUI", "SelectVehicleDestination", {Vehicle = vehicle, OrderPriority = 1})
