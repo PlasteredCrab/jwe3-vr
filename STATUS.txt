@@ -1,6 +1,25 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.46  First headset test, part 3: why the park never showed, and the menu clicks
+    - With verbose logs (user's go-ahead): in the park the mod submitted 4 layers per frame (eye images, HUD panel,
+      dot, beam), xrEndFrame XR_SUCCESS, eye views +-69 x +-58 deg and 0.03 m / 0 deg from the head, eye images'
+      alpha 255 everywhere (automatic check) - so neither pose, FOV, alpha nor submission was wrong. SteamVR's own
+      log (Steam/logs/vrcompositor.txt) had the answer: from the first eye image on, every frame
+      "[Compositor] AcquireSync FAILED with WAIT_TIMEOUT" and "ReleaseSync FAILED with unknown hr 0x887a0001"
+      (DXGI_ERROR_INVALID_CALL), the same at the earlier session's park time. In alternate-eye mode the mod released
+      only the rendered eye's swapchain image per frame while the projection layer named both; SteamVR's D3D12 path
+      then fails its keyed-mutex sync on the other one and drops the whole scene, while every quad layer (menu
+      screen, dot, beam), released every frame, showed. Fix: each eye's latest image is kept in the mod's own texture,
+      and both eye swapchains get a freshly acquired and released image every frame (one extra 1920x1200 copy).
+      Not yet seen in the headset.
+    - Menu clicks: the window-message counter showed every trigger press arriving at the game window (WM_LBUTTONDOWN
+      and UP at the laser point, MK_LBUTTON, 125-391 ms apart, game in front) and the menu ignoring them, while a real
+      mouse click (with WM_INPUT raw input) worked. The remote script's clicks on CONTINUE that always work are
+      preceded by the window-activation messages (FOCUS); the trigger posted those only with the game in the
+      background. Now it posts them before every press. Not yet seen in the headset.
+    - The menu screen, the dot and the laser beam were seen in the headset (user), "ugly" but there.
+
 2026-10-28  0.0.45  First headset test, part 2: the pointer dot was never drawn; a laser beam (Quest through Link)
     - The user saw no laser and no dot. Cause: the dot's swapchain was created in the game's format (10-bit,
       DXGI 24 on this PC) and its image is built only in 8 bits, so EnsureDotTexture failed silently every frame -

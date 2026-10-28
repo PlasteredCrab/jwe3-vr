@@ -468,8 +468,11 @@ void MouseButton(int button, bool down) {
     // then the Claude app came to the front and the trigger stopped working), so a press while the game is in the
     // background first tells the game window it is active - messages to its own window only; the real foreground
     // window is not changed.
+    // Every press, not only while in the background: the main menu ignored presses with the game in front too (second
+    // headset run: WM_LBUTTONDOWN/UP reached the window at CONTINUE, nothing happened), while the remote script's
+    // clicks on CONTINUE - always preceded by these messages (FOCUS) - work every time.
     bool background = down && g_hwnd && GetForegroundWindow() != g_hwnd;
-    if (background) {
+    if (down && g_hwnd) {
         PostMessageW(g_hwnd, WM_ACTIVATEAPP, TRUE, 0);
         PostMessageW(g_hwnd, WM_NCACTIVATE, TRUE, 0);
         PostMessageW(g_hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
@@ -493,7 +496,7 @@ void MouseButton(int button, bool down) {
     if (down && logged.fetch_add(1) < 20) {
         LPARAM pt = g_cursorPt.load();
         LOGI("laser: %s press at %d,%d; game window %s", button == 0 ? "left" : "right", (int)(short)LOWORD(pt),
-             (int)(short)HIWORD(pt), background ? "NOT in the foreground (activation messages posted first)" : "in the foreground");
+             (int)(short)HIWORD(pt), background ? "NOT in the foreground; activation messages posted first" : "in the foreground; activation messages posted first");
     }
 }
 

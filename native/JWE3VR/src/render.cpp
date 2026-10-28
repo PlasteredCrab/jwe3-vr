@@ -244,6 +244,72 @@ static void CopyBackbufferTo(ID3D12Resource* bb, xr::SwapId id) {
     xr::ReleaseImage(id);
 }
 
+// Alternate-eye mode keeps each eye's latest image here (the backbuffer's size and format, kept in COPY_SOURCE), so
+// both eye swapchains get a freshly acquired and released image every frame. SteamVR's D3D12 runtime needs that: with
+// only the rendered eye's swapchain released per frame, a projection layer naming the other one made its compositor's
+// sync on that image fail every frame (vrcompositor.txt: "AcquireSync FAILED with WAIT_TIMEOUT" and "ReleaseSync FAILED
+// 0x887a0001" from the first eye image on) and the headset showed no park at all - only the quad layers (the menu
+// screen, the dot, the beam), which are released every frame (first headset test, Quest through Link).
+static ID3D12Resource* g_eyeTex[2]{};
+static bool g_eyeTexFilled[2]{};
+static D3D12_RESOURCE_DESC g_eyeTexDesc{};
+
+static bool EnsureEyeTextures(const D3D12_RESOURCE_DESC& bb) {
+    if (g_eyeTex[0] && g_eyeTex[1] && g_eyeTexDesc.Width == bb.Width && g_eyeTexDesc.Height == bb.Height &&
+        g_eyeTexDesc.Format == bb.Format)
+        return true;
+    WaitCopies(); // the old ones may still be read by a copy in flight
+    for (int i = 0; i < 2; ++i) {
+        SafeRelease(g_eyeTex[i]);
+        g_eyeTexFilled[i] = false;
+    }
+    if (!g_device) return false;
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC td{};
+    td.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    td.Width = bb.Width;
+    td.Height = bb.Height;
+    td.DepthOrArraySize = 1;
+    td.MipLevels = 1;
+    td.Format = bb.Format;
+    td.SampleDesc.Count = 1;
+    for (int i = 0; i < 2; ++i)
+        if (FAILED(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &td, D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr,
+                                                     IID_PPV_ARGS(&g_eyeTex[i])))) {
+            SafeRelease(g_eyeTex[0]);
+            SafeRelease(g_eyeTex[1]);
+            JVR_LOG_ONCE("eye images: could not create the per-eye textures; each frame releases only the rendered eye");
+            return false;
+        }
+    g_eyeTexDesc = bb;
+    LOGI("eye images: per-eye textures %llux%u format %d; both eye swapchains are filled every frame",
+         (unsigned long long)bb.Width, bb.Height, (int)bb.Format);
+    return true;
+}
+
+// The rendered eye: backbuffer -> its texture, then both eyes' textures -> freshly acquired swapchain images.
+static void SubmitEyeImages(ID3D12Resource* bb, int eye) {
+    ID3D12Resource* tex = g_eyeTex[eye];
+    bool ok = Submit([&](ID3D12GraphicsCommandList* list) {
+        D3D12_RESOURCE_BARRIER pre[2] = {Transition(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE),
+                                         Transition(tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COPY_DEST)};
+        list->ResourceBarrier(2, pre);
+        list->CopyResource(tex, bb);
+        D3D12_RESOURCE_BARRIER post[2] = {Transition(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT),
+                                          Transition(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE)};
+        list->ResourceBarrier(2, post);
+    });
+    if (ok) g_eyeTexFilled[eye] = true;
+    for (int i = 0; i < 2; ++i) {
+        if (!g_eyeTexFilled[i]) continue;
+        xr::SwapId id = i == 0 ? xr::SwapId::Left : xr::SwapId::Right;
+        if (ID3D12Resource* img = xr::AcquireImage(id)) {
+            CopyToImage(g_eyeTex[i], D3D12_RESOURCE_STATE_COPY_SOURCE, img);
+            xr::ReleaseImage(id);
+        }
+    }
+}
+
 // White disc with a dark rim, premultiplied alpha, in the dot swapchain's format (kept in COPY_SOURCE).
 static bool EnsureDotTexture() {
     DXGI_FORMAT fmt = xr::DotFormat();
@@ -764,7 +830,8 @@ static void OnPresent(IDXGISwapChain* sc) {
             g_views[0] = {req.eyeStage[0], fov, true};
             g_views[1] = {req.eyeStage[1], fov, true};
         } else if (req.eye >= 0) {
-            CopyBackbufferTo(bb, req.eye == 0 ? xr::SwapId::Left : xr::SwapId::Right);
+            if (EnsureEyeTextures(d)) SubmitEyeImages(bb, req.eye);
+            else CopyBackbufferTo(bb, req.eye == 0 ? xr::SwapId::Left : xr::SwapId::Right);
             g_views[req.eye] = {req.stagePose, fov, true};
         } else {
             CopyBackbufferTo(bb, xr::SwapId::Left);
