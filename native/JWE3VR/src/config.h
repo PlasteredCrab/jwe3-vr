@@ -42,6 +42,7 @@ struct Settings {
     float gunnerAimGain = 6.0f;   // stick deflection per radian of aim error when steering the gun to your hand
     bool steeringWheel = true;    // grab the wheel with both grips to steer
     float laserSmoothing = 12.0f; // cursor follow rate (1/s); higher = snappier, lower = steadier
+    bool rawClicks = true;        // laser clicks also reach the game as raw input (WM_INPUT + GetRawInputData)
 
     // [UI]
     bool hideHudImmersive = true; // hide the 2D HUD while you are in the 3D world (it is shown on the tablet)

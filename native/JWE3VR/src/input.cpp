@@ -79,6 +79,7 @@ static std::atomic<bool> g_cursorFromPark{false};
 // mouse messages the game takes from its queue (PeekMessageW / GetMessageW). Counted in the 10 s window line.
 static std::atomic<ULONGLONG> g_laserCursorAt{0}; // last frame the laser drove the cursor
 static std::atomic<unsigned> g_gcpCalls{0}, g_gcpLaser{0}, g_gmpCalls{0}, g_gmpLaser{0}, g_msgPt{0};
+static std::atomic<unsigned> g_rawPosted{0}, g_rawServed{0};
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -428,9 +429,100 @@ static BOOL WINAPI Hk_GetMessageW(LPMSG m, HWND h, UINT mn, UINT mx) {
     return r;
 }
 
+// Raw-input clicks. JWE3 reads the mouse through raw input too (RegisterRawInputDevices: the mouse with legacy
+// messages kept; WM_INPUT -> GetRawInputData into a 48-byte RAWINPUT -> RawInputDriver::HandleInput at 0x1417f6640,
+// which hands input with no device, as SendInput's has, to every mouse it knows). The JWE2 mod clicked with SendInput,
+// which makes both raw input and the WM_ messages; here SendInput is out (OS input), and the posted WM_LBUTTONDOWN
+// alone never opened WORKSHOP or SETTINGS on the main menu. So each laser press and release is also posted to the
+// game's own window as a WM_INPUT whose handle is one of ours, and the game's GetRawInputData call for that handle is
+// answered here, in this process, with a mouse record carrying just the button change. Real handles pass through.
+struct FakeRaw {
+    std::atomic<uintptr_t> handle{0};
+    std::atomic<USHORT> buttons{0};
+    std::atomic<LONG> dx{0};
+};
+static FakeRaw g_fakeRaw[16];
+static std::atomic<unsigned> g_fakeRawSeq{0};
+constexpr uintptr_t kFakeRawTag = 0x4A565200; // "JVR" + a sequence byte
+
+static bool FindFakeRaw(HRAWINPUT h, USHORT& buttons, LONG& dx) {
+    uintptr_t v = (uintptr_t)h;
+    if ((v & ~(uintptr_t)0xFF) != kFakeRawTag) return false;
+    const FakeRaw& f = g_fakeRaw[v & 15];
+    if (f.handle.load() != v) return false;
+    buttons = f.buttons.load();
+    dx = f.dx.load();
+    return true;
+}
+
+// dx: a relative move in mouse counts (a one-count nudge before a press tells the game the mouse is in use: with
+// the virtual pad live it believes the player is on the pad, and JWE3's menus took the first press after pad input
+// only as a switch to the mouse).
+static void PostRaw(USHORT buttons, LONG dx) {
+    if (!g_hwnd || !config::Get().rawClicks) return;
+    unsigned seq = g_fakeRawSeq.fetch_add(1) & 0xFF;
+    uintptr_t h = kFakeRawTag | seq;
+    FakeRaw& f = g_fakeRaw[seq & 15];
+    f.buttons = buttons;
+    f.dx = dx;
+    f.handle = h;
+    PostMessageW(g_hwnd, WM_INPUT, RIM_INPUT, (LPARAM)h);
+    ++g_rawPosted;
+}
+
+using GetRawInputDataFn = UINT(WINAPI*)(HRAWINPUT, UINT, LPVOID, PUINT, UINT);
+using DefWindowProcWFn = LRESULT(WINAPI*)(HWND, UINT, WPARAM, LPARAM);
+static GetRawInputDataFn o_GetRawInputData = nullptr;
+static DefWindowProcWFn o_DefWindowProcW = nullptr;
+
+static UINT WINAPI Hk_GetRawInputData(HRAWINPUT h, UINT cmd, LPVOID data, PUINT size, UINT headerSize) {
+    USHORT buttons = 0;
+    LONG dx = 0;
+    if (!FindFakeRaw(h, buttons, dx)) return o_GetRawInputData(h, cmd, data, size, headerSize);
+    if (!size || headerSize != sizeof(RAWINPUTHEADER) || (cmd != RID_INPUT && cmd != RID_HEADER)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return (UINT)-1;
+    }
+    RAWINPUT r{};
+    r.header.dwType = RIM_TYPEMOUSE;
+    r.header.dwSize = sizeof(RAWINPUTHEADER) + sizeof(RAWMOUSE);
+    r.header.hDevice = nullptr; // as SendInput's input arrives
+    r.header.wParam = RIM_INPUT;
+    r.data.mouse.usFlags = MOUSE_MOVE_RELATIVE;
+    r.data.mouse.usButtonFlags = buttons;
+    r.data.mouse.lLastX = dx;
+    UINT need = cmd == RID_HEADER ? (UINT)sizeof(RAWINPUTHEADER) : r.header.dwSize;
+    if (!data) {
+        *size = need;
+        return 0;
+    }
+    if (*size < need) {
+        *size = need;
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return (UINT)-1;
+    }
+    memcpy(data, &r, need);
+    static std::atomic<int> logged{0};
+    if (logged.fetch_add(1) < 20) LOGI("raw click: the game read our raw mouse record (buttons %#x, move %ld)", (unsigned)buttons, dx);
+    ++g_rawServed;
+    return need;
+}
+
+// DefWindowProc cleans up after WM_INPUT; ours has no system data behind it.
+static LRESULT WINAPI Hk_DefWindowProcW(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    USHORT b;
+    LONG dx;
+    if (msg == WM_INPUT && FindFakeRaw((HRAWINPUT)lp, b, dx)) return 0;
+    return o_DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 static void HookCursorQueries() {
     HMODULE u = GetModuleHandleW(L"user32.dll");
     if (!u) return;
+    hooks::Create("user32!GetRawInputData", (void*)GetProcAddress(u, "GetRawInputData"), (void*)&Hk_GetRawInputData,
+                  (void**)&o_GetRawInputData);
+    hooks::Create("user32!DefWindowProcW", (void*)GetProcAddress(u, "DefWindowProcW"), (void*)&Hk_DefWindowProcW,
+                  (void**)&o_DefWindowProcW);
     hooks::Create("user32!GetCursorPos", (void*)GetProcAddress(u, "GetCursorPos"), (void*)&Hk_GetCursorPos, (void**)&o_GetCursorPos);
     hooks::Create("user32!GetMessagePos", (void*)GetProcAddress(u, "GetMessagePos"), (void*)&Hk_GetMessagePos,
                   (void**)&o_GetMessagePos);
@@ -501,13 +593,14 @@ static void LogWindowCounts(const char* why) {
     if (g_hwnd) GetClientRect(g_hwnd, &rc);
     LOGI("window (%s): WM_MOUSEMOVE %u (last %d,%d), L down/up %u/%u, R down %u, WM_INPUT %u, activate %u, killfocus %u, "
          "setfocus %u, capturechanged %u, setcursor %u, keys %u; real cursor %s%d,%d (client %ldx%ld); foreground %s; "
-         "GetCursorPos %u (laser %u), GetMessagePos %u (laser %u), message pt set %u",
+         "GetCursorPos %u (laser %u), GetMessagePos %u (laser %u), message pt set %u; raw clicks posted %u, read %u",
          why, g_wmMove.exchange(0), m == -1 ? -1 : (int)(short)LOWORD(m), m == -1 ? -1 : (int)(short)HIWORD(m),
          g_wmLDown.exchange(0), g_wmLUp.exchange(0), g_wmRDown.exchange(0), g_wmInput.exchange(0), g_wmActivate.exchange(0),
          g_wmKillFocus.exchange(0), g_wmSetFocus.exchange(0), g_wmCapture.exchange(0), g_wmSetCursor.exchange(0),
          g_wmKey.exchange(0), haveCur ? "" : "(unknown) ", (int)cur.x, (int)cur.y, rc.right, rc.bottom,
          GetForegroundWindow() == g_hwnd ? "the game" : "another window", g_gcpCalls.exchange(0), g_gcpLaser.exchange(0),
-         g_gmpCalls.exchange(0), g_gmpLaser.exchange(0), g_msgPt.exchange(0));
+         g_gmpCalls.exchange(0), g_gmpLaser.exchange(0), g_msgPt.exchange(0), g_rawPosted.exchange(0),
+         g_rawServed.exchange(0));
 }
 
 void SetGameWindow(HWND hwnd) {
@@ -557,7 +650,9 @@ void MouseButton(int button, bool down) {
         LPARAM pt = g_pressPt.load();
         if (g_hwnd && pt != -1) {
             int x = (int)(short)LOWORD(pt), y = (int)(short)HIWORD(pt);
+            PostRaw(0, 1);
             PostMessageW(g_hwnd, WM_MOUSEMOVE, MouseKeys(), MAKELPARAM(x + 1, y));
+            PostRaw(0, -1);
             PostMessageW(g_hwnd, WM_MOUSEMOVE, MouseKeys(), pt);
         }
     }
@@ -581,6 +676,10 @@ void MouseButton(int button, bool down) {
         JVR_LOG_ONCE("laser: the cursor was held still during a click (%u small moves left out)", g_heldMoves.load());
         g_heldMoves = 0;
     }
+    // Raw input first, then the WM_ message, the order a real mouse's arrive in.
+    if (g_cursorPt.load() != -1)
+        PostRaw(button == 0 ? (down ? RI_MOUSE_LEFT_BUTTON_DOWN : RI_MOUSE_LEFT_BUTTON_UP)
+                            : (down ? RI_MOUSE_RIGHT_BUTTON_DOWN : RI_MOUSE_RIGHT_BUTTON_UP), 0);
     if (button == 0) PostMouse(down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
     else PostMouse(down ? WM_RBUTTONDOWN : WM_RBUTTONUP);
     // Every press for a while, with where it went and whether the game was in front: JWE3 ignores clicks while its

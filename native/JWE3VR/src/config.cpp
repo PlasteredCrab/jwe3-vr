@@ -65,6 +65,9 @@ VirtualPad = 1
 GunnerAimGain = 6.0
 SteeringWheel = 1
 LaserSmoothing = 12
+; Clicks also as raw input (what a real mouse sends too): a WM_INPUT posted to the game's own window, answered by
+; the game's GetRawInputData call in this process. 0 sends only the WM_LBUTTONDOWN / UP messages.
+RawClicks = 1
 
 [UI]
 HideHudImmersive = 1
@@ -176,6 +179,7 @@ void Load() {
     s.gunnerAimGain = Num(L"Input", L"GunnerAimGain", s.gunnerAimGain);
     s.steeringWheel = Bool(L"Input", L"SteeringWheel", s.steeringWheel);
     s.laserSmoothing = Num(L"Input", L"LaserSmoothing", s.laserSmoothing);
+    s.rawClicks = Bool(L"Input", L"RawClicks", s.rawClicks);
 
     s.hideHudImmersive = Bool(L"UI", L"HideHudImmersive", s.hideHudImmersive);
     s.screenDistance = Num(L"UI", L"ScreenDistance", s.screenDistance);

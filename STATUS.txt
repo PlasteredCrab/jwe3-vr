@@ -1,6 +1,24 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.54  Laser clicks also as raw input; DLAA and Maximum geometry set for the user
+    - Why the trigger never clicked WORKSHOP / SETTINGS (hover worked): JWE3.exe is the only module that reads input
+      (no GetKeyState / GetAsyncKeyState anywhere; the UI DLLs import none of it). It registers raw input for the
+      keyboard (1/6), the mouse (1/2, legacy messages kept) and generic desktop devices (1/0 page-only), all
+      DEVNOTIFY (0x1417f4d2d), and its WM_INPUT handler (0x1417f69a0) reads a 48-byte RAWINPUT with GetRawInputData
+      into RawInputDriver::HandleInput (0x1417f6640), which hands input with a NULL device (as SendInput's has) to
+      every mouse it knows. The JWE2 mod clicked with SendInput (raw input + WM_ messages); here only WM_LBUTTONDOWN /
+      UP were posted. Now each laser press / release is also posted to the game's own window as WM_INPUT with a
+      handle of ours, and a GetRawInputData hook answers the game's call for that handle with a mouse record (button
+      flags, NULL device); a DefWindowProcW hook skips the cleanup for ours. Before each press, two one-count raw
+      moves (+1, -1) tell the game the mouse is in use (the virtual pad makes it think the player is on the pad).
+      Input.RawClicks = 0 turns it off. The 10 s window line counts "raw clicks posted / read". Not yet run.
+    - The game's window procedure is 0x1400e5a70 (the one DefWindowProcW caller); GetCursorPos callers include
+      0x1404ea3f0 (next to Lua_GetMouseRay, the park's ~75 calls a second).
+    - On the user's request: Graphics.config.xml FullScreenAAQuality DLSS with DLSSQuality DLAA, GeometricQuality
+      Maximum (backup re/work/Graphics.config.before-dlaa.xml). Whether the game accepts Maximum for geometry is to
+      be checked in its menu / the rewritten file.
+
 2026-10-28  0.0.53  A 90 degree view for a sharper centre; frame pacing and tick pairing in the log
     - The user's VR View recording (E:\Videos6-10-28 12-57-24.mov, 62 s, 60 fps): the HUD panel IS there - the
       tall thin bar of icons is the game's left toolbar and the small "UNLIMITED ... 100%" strip is the bottom bar,
