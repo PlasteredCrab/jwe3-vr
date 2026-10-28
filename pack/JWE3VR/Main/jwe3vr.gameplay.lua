@@ -438,8 +438,16 @@ end
 Gameplay.DebugDinosaur = function(bSick)
     local cam = api.transform.CalculateWorldTransform(api.camera.GetMainCameraID())
     local cp = cam:GetPos()
-    local dino, _, nDist = Ranger.NearestDinosaur(Vector3:new(cp:GetX(), cp:GetY(), cp:GetZ()))
+    local dino, vDino, nDist = Ranger.NearestDinosaur(Vector3:new(cp:GetX(), cp:GetY(), cp:GetZ()))
     local sDino = "nearest dinosaur " .. tostring(dino) .. (dino and global.string.format(" at %.1f m", nDist) or "")
+    if vDino then
+        -- Where it is from the camera (degrees right of where the camera faces, metres below): to steer remotely.
+        local dx, dy, dz = vDino:GetX() - cp:GetX(), vDino:GetY() - cp:GetY(), vDino:GetZ() - cp:GetZ()
+        local f, r = cam:GetF(), cam:GetR()
+        local nAhead = dx * f:GetX() + dz * f:GetZ()
+        local nRight = dx * r:GetX() + dz * r:GetZ()
+        sDino = sDino .. global.string.format(" (bearing %.0f deg right, %.0f m below)", math.atan(nRight, nAhead) * 57.3, -dy)
+    end
     if not bSick then
         Ranger.bAimDino = not Ranger.bAimDino
         Gameplay.nDebugGunDino = nil

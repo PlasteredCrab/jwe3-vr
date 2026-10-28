@@ -324,7 +324,8 @@ The file is written with comments on first run. The ones you are most likely to 
   finds one; `re/remote/drive.sh <name> jeep|heli` uses it to reach a seat with no clicks. The same file with
   "paths" logs each building's path connections and path join, "aimdino" turns the on-foot tools' and gun seats'
   aim at the nearest dinosaur on or off (scripted hands cannot follow an animal; a gun seat stays on the first one), and "sick" gives the nearest dinosaur a disease
-  (one the game treats with darts) for the medicine gun. Shots and projectile impacts are logged.
+  (one the game treats with darts) for the medicine gun. Both log the nearest dinosaur's distance and bearing from
+  the camera (to steer a vehicle to it remotely). Shots and projectile impacts are logged.
 - **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
   panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`
   to see which render target holds the UI; until then the tablet shows the HUD.

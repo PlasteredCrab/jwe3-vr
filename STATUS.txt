@@ -1,6 +1,13 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.43  Steering the helicopter to the dinosaurs remotely (runs 152-153; stopped at the user's request)
+    - The "aimdino" / "sick" debug lines now give the nearest dinosaur's bearing from the camera and height below it.
+      With it the capture helicopter was turned (left stick: about 20 degrees a second at 2 fps) and flown (left
+      stick forward) from 90 m to about 7 m from an Archaeornithomimus, low over the enclosure.
+    - Not done: the gun seat and the shot from there - the user asked to stop the game before off-hand Y was seen
+      to enter the seat. A helicopter or jeep dart on a dinosaur is still not seen.
+
 2026-10-28  0.0.42  Photo mode from the helicopter and the aviary drone (runs 148-151)
     - Correction of 0.0.19: the capture helicopter does have a photo mode (VehicleUtils.CanSwitchToPhoto lets it
       in). What 0.0.19 found is that no pad button reaches it: helicopters and drones use the game action
