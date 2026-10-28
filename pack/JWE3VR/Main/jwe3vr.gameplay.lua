@@ -296,25 +296,22 @@ Gameplay.DebugDrive = function(bHelicopter)
     return true
 end
 
--- Debug (JWE3VR_drive.req "paths"): for the response facility (the spawn point of the nearest ranger jeep) and every
--- arrival building, whether the game counts its required path connections as made, and where on the flat screen the
--- points 5.6 m off each side of it are (u,v from the top left) - to aim the path tool at a join point remotely.
+-- Debug (JWE3VR_drive.req "paths"): for the response facility (the spawn point of the nearest ranger jeep, and its
+-- parents) and every arrival building, whether the game counts its required path connections as made, and where its
+-- path join ("Path_Junction" child: where a path must end to connect) is in the world and on the flat screen (u,v from
+-- the top left) - to aim the path tool at it remotely. World transforms throughout (the camera is parented).
 Gameplay.DebugPaths = function()
     local tWorld = api.world.GetWorldAPIs()
     local civ = tWorld.civileng
     local camID = api.camera.GetMainCameraID()
-    local cam = api.transform.GetTransform(camID)
+    local cam = api.transform.CalculateWorldTransform(camID)
+    local nFovY, nAspect = 0.873, 16 / 9
     local bFov, vFov = pcall(api.camera.GetFOV, camID)
-    local nFovY, nAspect = 1.0, 16 / 9
-    -- api.camera.GetFOV returns a 2D vector (horizontal, vertical radians); read it by its text if need be.
     local sx, sy = global.string.match(tostring(vFov), "%(([%d%.%-]+),([%d%.%-]+)%)")
     if bFov and sx then
         local nX, nY = global.tonumber(sx), global.tonumber(sy)
         if nX and nY and nX > 0 and nY > 0 then nFovY, nAspect = nY, math.tan(nX * 0.5) / math.tan(nY * 0.5) end
-    elseif bFov and global.type(vFov) == "number" then
-        nFovY = vFov
     end
-    Bridge.Text("paths: camera FOV " .. tostring(vFov) .. " -> fovY " .. global.string.format("%.3f", nFovY))
     local cp, cR, cU, cF = cam:GetPos(), cam:GetR(), cam:GetU(), cam:GetF()
     local Screen = function(v)
         local dx, dy, dz = v:GetX() - cp:GetX(), v:GetY() - cp:GetY(), v:GetZ() - cp:GetZ()
@@ -322,38 +319,73 @@ Gameplay.DebugPaths = function()
         local y = dx * cU:GetX() + dy * cU:GetY() + dz * cU:GetZ()
         local z = dx * cF:GetX() + dy * cF:GetY() + dz * cF:GetZ()
         if z <= 0.1 then return "behind" end
-        local t = math.tan(nFovY * 0.5)
-        return global.string.format("%.3f,%.3f", 0.5 + 0.5 * x / (z * t * nAspect), 0.5 - 0.5 * y / (z * t))
+        local tn = math.tan(nFovY * 0.5)
+        return global.string.format("%.3f,%.3f", 0.5 + 0.5 * x / (z * tn * nAspect), 0.5 - 0.5 * y / (z * tn))
     end
-    local Report = function(sWhat, nEntity, d)
-        local t = nEntity and api.transform.GetTransform(nEntity)
-        if not t then
-            Bridge.Text("paths: " .. sWhat .. " " .. tostring(nEntity) .. ": no transform")
+    local Where = function(e)
+        local bP, v = pcall(api.transform.CalculateWorldPosition, e)
+        if not bP or not v then return "?" end
+        return global.string.format("(%.1f %.1f %.1f) screen %s", v:GetX(), v:GetY(), v:GetZ(), Screen(v))
+    end
+    local Junction = function(nEntity)
+        for _, sName in global.ipairs({"./Path_Junction", "./Root/Path_Junction", "./Foundation/Path_Junction"}) do
+            local bF, e = pcall(api.entity.FindEntityByName, sName, nEntity)
+            if bF and global.type(e) == "number" and e > 0 then return e, sName end
+        end
+        return nil
+    end
+    local Report = function(sWhat, nEntity)
+        if not nEntity then
+            Bridge.Text("paths: " .. sWhat .. ": none")
             return
         end
         local bOk, bHas = pcall(civ.HasRequiredPathConnections, civ, nEntity)
         local bOk2, bOper = pcall(civ.IsFoundationOperational, civ, nEntity)
-        local p, R, F = t:GetPos(), t:GetR(), t:GetF()
-        local At = function(r, f) return Vector3:new(p:GetX() + R:GetX() * r + F:GetX() * f, p:GetY(), p:GetZ() + R:GetZ() * r + F:GetZ() * f) end
-        Bridge.Text("paths: " .. sWhat .. " " .. tostring(nEntity) .. " paths connected " .. tostring(bOk and bHas) .. ", operational " ..
-                    tostring(bOk2 and bOper) .. "; screen centre " .. Screen(p) .. ", at " .. d .. " m: +F " .. Screen(At(0, d)) .. ", -F " ..
-                    Screen(At(0, -d)) .. ", +R " .. Screen(At(d, 0)) .. ", -R " .. Screen(At(-d, 0)))
+        local nJ, sJ = Junction(nEntity)
+        local Links = function(e)
+            local bC, n = pcall(civ.GetJunctionConnectionCount, civ, e)
+            return bC and tostring(n) or "?"
+        end
+        Bridge.Text("paths: " .. sWhat .. " " .. tostring(nEntity) .. " at " .. Where(nEntity) .. ": paths connected " ..
+                    tostring(bOk and bHas) .. ", operational " .. tostring(bOk2 and bOper) .. "; join " ..
+                    (nJ and (sJ .. " " .. tostring(nJ) .. " at " .. Where(nJ) .. ", " .. Links(nJ) .. " path links") or "not found"))
+        -- Every junction the game lists for this foundation, with its links (0 = nothing joined there).
+        local bJ, tJ = pcall(civ.GetJunctionsFromFoundation, civ, nEntity)
+        if bJ and global.type(tJ) == "table" then
+            for _, e in global.pairs(tJ) do
+                if global.type(e) == "number" then
+                    Bridge.Text("paths:   junction " .. tostring(e) .. " at " .. Where(e) .. ", " .. Links(e) .. " path links")
+                end
+            end
+        elseif bJ then
+            Bridge.Text("paths:   GetJunctionsFromFoundation: " .. tostring(tJ))
+        end
     end
+    Bridge.Text("paths: camera at " .. global.string.format("(%.1f %.1f %.1f)", cp:GetX(), cp:GetY(), cp:GetZ()) ..
+                ", fovY " .. global.string.format("%.3f", nFovY))
     local veh = Vehicles.FindNearestTeam(cp, false, true)
-    local bSp, nFacility = pcall(tWorld.vehicles.GetSpawnPoint, tWorld.vehicles, veh)
-    Report("response facility", bSp and nFacility or nil, 5.6)
+    local bSp, nSpawn = pcall(tWorld.vehicles.GetSpawnPoint, tWorld.vehicles, veh)
+    local nEntity = bSp and nSpawn or nil
+    for i = 1, 4 do
+        if not nEntity then break end
+        Report("response facility (level " .. i .. ")", nEntity)
+        local bPar, nPar = pcall(api.transform.GetParent, nEntity)
+        nEntity = (bPar and global.type(nPar) == "number" and nPar > 0 and nPar ~= nEntity) and nPar or nil
+    end
     for _, sApi in global.ipairs({"park", "buildings", "building"}) do
         local o = tWorld[sApi]
         if o and o.GetAllArrivalBuildings then
             local bA, tAll = pcall(o.GetAllArrivalBuildings, o)
             if bA and global.type(tAll) == "table" then
                 for k, v in global.pairs(tAll) do
-                    Report("arrival building", global.type(v) == "number" and v or (global.type(k) == "number" and k or nil), 3.6275)
+                    Report("arrival building", global.type(v) == "number" and v or (global.type(k) == "number" and k or nil))
                 end
             end
             break
         end
     end
+    -- No walk over the path graph here: civileng:GetJunctionConnections / GetConnectionJunctions crashed the game
+    -- (access violation in native code, run 137) - pcall cannot catch that. Only the junction-count call is safe.
 end
 
 Gameplay.SendTeam = function(bHelicopter)

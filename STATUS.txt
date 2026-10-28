@@ -1,6 +1,25 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.38  Sandbox path work with the game's own path data (runs 135-136)
+    - The path report (JWE3VR_drive.req "paths") now finds each building's "Path_Junction" child and reports, from
+      the game's own data, its world position, its screen position (world transforms - the camera is parented, so
+      the earlier local-transform projections were wrong) and civileng:GetJunctionConnectionCount. The response
+      facility's real root is two parents up from a jeep's spawn point (the spawn points report "connected" and
+      had misled 0.0.36).
+    - Found: the Arrival Point's junction had 1 link (0.0.36's work reached it); the facility's had 0 - every
+      earlier attempt stopped 4 m short at the facility's paved apron. With the camera top-down and the junction
+      projected, the path tool snapped to it (the preview crossed the apron to the junction): the facility's
+      junction now has 1 link, and a link joins that stub to the loop. Both buildings still report
+      "paths connected false" / "NO PATH TO ARRIVAL POINT", so the network between them is broken somewhere.
+    - Game crash (run 137, my debug code): walking the path graph with civileng:GetJunctionConnections and
+      GetConnectionJunctions crashed JWE3 with an access violation at 0x1405E3C75 right after the report's last
+      safe line (pcall cannot catch a native fault). Removed; only GetJunctionConnectionCount is used. The Frontier
+      crash reporter was closed without sending; no display-driver event; nothing new in the Sophos logs; the
+      Sandbox autosave (03:09, after the path work) is intact. Rule: do not call native path-graph functions with
+      unverified entity ids.
+    - to_continue.sh hovers CONTINUE before its menu check (a cursor left on another row unlit it, run 135).
+
 2026-10-28  0.0.37  The VR trigger fires the gun seats (runs 133-134)
     - In a campaign park (Montana Badlands, started from the main menu at the user's suggestion; the user then
       chose to stay with the Sandbox park, so it was left after one session - its autosave is now the newest,

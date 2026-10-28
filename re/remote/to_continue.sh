@@ -29,7 +29,7 @@ if [ "$(head -n1 "$D/JWE3VR.log" 2>/dev/null)" = "$old" ]; then
 fi
 echo "game up after $((SECONDS-start))s"; sleep 20
 cd "$P"
-bash re/remote/step.sh "${run}_menu" "FOCUS+CLICK=0.4135,0.8315 100" "- 2000" | grep -v "pad script"
+bash re/remote/step.sh "${run}_menu" "FOCUS+CLICK=0.4135,0.8315 100" "- 1000" "MOVE=0.079,0.343 1500" | grep -v "pad script" # hover CONTINUE: a cursor left on another row unlit it (run 135)
 # Only click CONTINUE on the main menu itself (logo crisp, CONTINUE row lit). Run 63 opened on the "Exit game?"
 # dialog instead (cause unknown); CANCEL that once and look again, else stop without clicking.
 screen() { "/e/Modding/tools/cobra-tools/.venv/Scripts/python" -E -c "
