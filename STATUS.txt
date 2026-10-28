@@ -1,6 +1,33 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.34  Two-hand scale verified in stereo; a lead on the view constant buffer; park work (runs 123-125)
+    - The user allowed changes to the Sandbox park and asked for everything still possible without them.
+    - Two-hand scale (JWE3VR_aer.req, 8 eye frames each, scripted grips): mean grey difference between consecutive
+      left/right frames 4.5 at the start, 2.5 after spreading the hands 0.3 -> 0.9 m, 5.8 after squeezing them to
+      0.12 m (the same eye two frames apart: 0.2-0.3, so this is not noise). Spreading makes the park bigger, so the
+      eyes are closer together in park units and see less parallax; squeezing does the opposite - as designed.
+    - View constant buffer (JWE3VR_cbscan.req with a new pass for the projection matrix: 1/tan(fovY/2) and that over
+      16:9, five floats apart): one 16 MB write-combined allocation (0x6D760000 in run 124) holds both the
+      projection (6 hits) and the camera position (8 hits, a row of camera x, y, z), so it is almost certainly the
+      upload ring of the game's view constants. It does not line up with any root CBV bound that frame (the best
+      CPU-GPU offset is shared by 3-4 hits, no better than chance), so JWE3 likely binds its view constants through
+      descriptor tables (CreateConstantBufferView), which discovery never records. Next step, not done: hook
+      CreateConstantBufferView, vote the ring's CPU-GPU offset against those buffer locations, then the per-eye TAA
+      and sync stereo code could use it. The earlier note (run 35) that no camera position sits in write-combined
+      memory was wrong for this park/session.
+    - Photo: JWE3 keeps photos inside the park (nothing in Saved Games, Pictures or LocalAppData). A photo taken with
+      the VR view on (run 125: the resting headset looked down at the jeep's roof, the game's photo camera looked at
+      the mountains) scored "no clear animals in shot" - the test park has none, so which view the game judges is
+      still open.
+    - Park changes: the facility's "orders refused" is not power (the sandbox has Unlimited Power on) but its warning
+      "NO PATH TO ARRIVAL POINT": staff must arrive by path. Built in the Sandbox park: Arrival Point 1 east of the
+      response facility and a path network around the facility to it (in the 21:33 autosave). The facility still
+      reports no path - the path does not reach the entrance the game expects, and remote building needs several
+      clicks per piece with no view of where the entrances are. Stopped rather than litter the park further.
+    - Not done, blocked on the same: dinosaurs (a hatchery and an enclosure, both path-connected) and an aviary for
+      the drones. Darts, medicine, firing, team orders and drone support stay untested.
+
 2026-10-27  0.0.33  Steering wheel on scripted input (run 122)
     - In the jeep, both grips held with the hands level, then the right hand 20 cm lower than the left: "steering
       wheel: hands turned 28 deg, steering 0.31" (atan(0.2/0.4) = 27 deg; the stick is the angle over 90 deg). A

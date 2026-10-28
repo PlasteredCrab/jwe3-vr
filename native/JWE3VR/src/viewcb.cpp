@@ -3,6 +3,7 @@
 #include "log.h"
 #include "passes.h"
 #include "render.h"
+#include "rig.h"
 
 #include <algorithm>
 #include <condition_variable>
@@ -323,6 +324,64 @@ static void ScanMain(Vec3 cam, std::vector<D3D12_GPU_VIRTUAL_ADDRESS> vas) {
                 LOGI("cb scan:   %+3d: % .5f % .5f % .5f % .5f", k - 16, rows[k * 4], rows[k * 4 + 1], rows[k * 4 + 2], rows[k * 4 + 3]);
             break;
         }
+    }
+    // Second pass: the projection matrix. JWE3 keeps no absolute camera position in its constant buffers (none in
+    // 3 GB of write-combined memory, run 35: camera-relative rendering, most likely), but the projection's scale terms
+    // are exact values the rig sets: 1/tan(fovY/2) and that over the 16:9 aspect, five floats apart (P[0][0] and
+    // P[1][1], either way round). Hits in a ring that lines up with bound root CBVs would be the view buffer.
+    float fovY = 0.f;
+    rig::LastCamera(fovY);
+    if (fovY > 0.1f) {
+        float p11 = 1.f / std::tan(fovY * 0.5f), p00 = p11 * 9.f / 16.f;
+        auto close = [](float v, float want) { return std::fabs(v - want) < std::fabs(want) * 2e-4f; };
+        int pHits = 0, pWc = 0;
+        std::vector<Hit> pFound;
+        for (const Region& r : regions) {
+            int regionHits = 0;
+            for (size_t off = 0; off < r.size && pHits < 200 && regionHits < 20; off += buf.size() * 4) {
+                size_t n = std::min(buf.size() * 4, r.size - off);
+                if (!SafeRead(r.base + off, buf.data(), n)) break;
+                size_t count = n / 4;
+                for (size_t i = 0; i + 5 < count && pHits < 200 && regionHits < 20; ++i) {
+                    if (!close(buf[i], p00) || !close(buf[i + 5], p11)) continue;
+                    uint8_t* at = r.base + off + i * 4;
+                    ++pHits;
+                    ++regionHits;
+                    if (r.protect & PAGE_WRITECOMBINE) ++pWc;
+                    pFound.push_back({at, r.allocBase});
+                    if (pHits <= 6) {
+                        LOGI("cb scan: projection hit %d at %p (%s%s, allocation %p)", pHits, (void*)at, MemType(r.type),
+                             (r.protect & PAGE_WRITECOMBINE) ? ", write-combined" : "", r.allocBase);
+                        size_t row0 = i & ~(size_t)3;
+                        for (int k = -1; k <= 4; ++k) {
+                            long long j = (long long)row0 + 4 * k;
+                            if (j < 0 || j + 3 >= (long long)count) continue;
+                            LOGI("cb scan:     row %+d: % .5f % .5f % .5f % .5f", k, buf[j], buf[j + 1], buf[j + 2], buf[j + 3]);
+                        }
+                    }
+                }
+            }
+        }
+        LOGI("cb scan: projection P00 %.5f P11 %.5f (fovY %.1f deg): %d hits, %d in write-combined memory", p00, p11,
+             fovY * 57.2958f, pHits, pWc);
+        std::map<void*, std::vector<uint8_t*>> pByAlloc;
+        for (const Hit& h : pFound) pByAlloc[h.alloc].push_back(h.at);
+        for (auto& [alloc, list] : pByAlloc) {
+            std::unordered_map<long long, int> votes;
+            for (uint8_t* c : list) {
+                std::unordered_set<long long> mine;
+                for (D3D12_GPU_VIRTUAL_ADDRESS v : vas)
+                    if (mine.insert((long long)((uintptr_t)c - v)).second) ++votes[(long long)((uintptr_t)c - v)];
+            }
+            long long best = 0;
+            int bestCount = 0;
+            for (auto& [x, nv] : votes)
+                if (nv > bestCount) best = x, bestCount = nv;
+            LOGI("cb scan: projection allocation %p: %zu hits, best CPU - GPU offset %llx shared by %d of them", alloc, list.size(),
+                 (unsigned long long)best, bestCount);
+        }
+    } else {
+        LOGI("cb scan: no rig FOV yet; projection pass skipped");
     }
     LOGI("cb scan: done in %.1f s, %d hits, %d ring candidates", (GetTickCount64() - start) / 1000.0, hits, rings);
     g_scanning = false;
