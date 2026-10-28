@@ -1114,7 +1114,7 @@ static void OnPresent(IDXGISwapChain* sc) {
     }
 
     xr::EndFrame(g_views, layers);
-    input::OnFrame(screen, layers.hud);
+    input::OnFrame(screen, layers.hud, screen && !g_tablet.load());
     viewcb::OnPresent();
     ULONGLONG waitStart = GetTickCount64();
     xr::BeginFrame();

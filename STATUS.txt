@@ -1,6 +1,19 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.50  Menus: the trigger also presses pad A; the anti-aliasing options
+    - The user could not open WORKSHOP with the trigger. The press log showed the presses reaching the window on
+      WORKSHOP (157,800, 172 ms, game in front), and the remote script's own posted clicks (FOCUS, move, two clicks -
+      the way that opens CONTINUE in every remote run) did nothing on WORKSHOP or SETTINGS either. Pad A (after a
+      left-trigger nudge: the first pad input after mouse use only switches the game to the pad) opened the item the
+      cursor highlighted (LOAD GAME). So on any flat screen (front end and the in-park tablet) a trigger press now also
+      pulses the virtual pad: left trigger 80 ms, then A from 160 to 330 ms, nothing else. Whether A on the in-park
+      tablet acts on the laser's item or on the game's own pad focus is not known yet (logged per pulse).
+      Why posted clicks work at some times (CONTINUE at 11:05) and not others is still open.
+    - Anti-aliasing: the user's menu has no FXAA or Off. JWE3.exe's option names: Off, TAA, TemporalUpscale, FXAA,
+      FSR3, DLSS (DLAA as a DLSS quality). The user's Graphics.config.xml: FullScreenAAQuality DLSS, Ratio3_2,
+      ScreenWidth/Height 1440x900 (borderless on a 1920x1200 monitor), ChromaticAberration 1.
+
 2026-10-28  0.0.49  Google Earth VR style park controls; why the image is so soft
     - The user's report on 0.0.48: no HUD panel still, trigger clicks in the park did nothing, zooming with two grips
       put the stereo out of line, and no way to fly up or down. The user wants Google Earth VR's scheme.

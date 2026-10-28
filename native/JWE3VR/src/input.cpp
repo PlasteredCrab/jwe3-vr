@@ -72,6 +72,13 @@ static bool g_trigTouched = false;
 // it hundreds of pixels, so a quick pull is a click by time alone (first headset test: park presses became drags
 // within 15 ms) and the pull-start correction is not used.
 static std::atomic<bool> g_cursorFromPark{false};
+// Front-end menus: the main menu ignores posted clicks (first headset test, 12:23-12:26: the laser's presses and the
+// remote script's own clicks reached the window on WORKSHOP and SETTINGS and did nothing), but pad A activates the item
+// the cursor highlights (seen: A opened LOAD GAME). So there a trigger press also pulses the virtual pad: a short left
+// trigger first (the game takes the first pad input after mouse use only as a switch to the pad), then A.
+static ULONGLONG g_menuPulseAt = 0;
+static bool g_menuTrigPrev = false;
+static std::atomic<bool> g_menuPulseActive{false};
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -280,7 +287,7 @@ static DWORD PadState(DWORD index, XINPUT_STATE* state, GetStateFn original) {
         if (g_padLive && state) {
             // Connected whenever the controllers are: the pad's input only while Lua passes it through, else at
             // rest (a pad that came and went would be dropped and found again by the game every second).
-            bool through = g_flags.pad == PadMode::Passthrough;
+            bool through = g_flags.pad == PadMode::Passthrough || g_menuPulseActive.load();
             state->dwPacketNumber = through ? g_packet : 1;
             state->Gamepad = through ? g_pad : XINPUT_GAMEPAD{};
             return ERROR_SUCCESS;
@@ -586,7 +593,7 @@ static bool ScreenPointer(int hand, float dt, bool hud = false) {
     return true;
 }
 
-void OnFrame(bool screenVisible, bool hudVisible) {
+void OnFrame(bool screenVisible, bool hudVisible, bool frontEnd) {
     const Settings& cfg = config::Get();
     ULONGLONG now = GetTickCount64();
     static ULONGLONG lastCounts = 0;
@@ -685,6 +692,22 @@ void OnFrame(bool screenVisible, bool hudVisible) {
         MouseButton(1, false);
     }
 
+    // Front-end menu: the trigger's press also starts the pad pulse (see g_menuPulseAt).
+    bool trig = c.trigger[dom] > 0.6f;
+    // On the in-park tablet too (the user found its clicks ignored as well). Whether A there acts on the item the
+    // laser highlights or on the game's own pad focus is not known yet: the log says which screen each pulse was for.
+    if (screenVisible && pointing && trig && !g_menuTrigPrev) {
+        g_menuPulseAt = now;
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 100)
+            LOGI("menu: trigger press also sends pad A (after a left-trigger nudge) on the %s",
+                 frontEnd ? "front end (main menu / loading)" : "in-park tablet");
+    }
+    g_menuTrigPrev = trig;
+    ULONGLONG pulse = g_menuPulseAt ? now - g_menuPulseAt : 1000;
+    if (pulse >= 330) g_menuPulseAt = 0;
+    g_menuPulseActive = pulse < 330;
+
     // Virtual pad: the VR controllers mirrored onto an Xbox layout, then Lua's overrides.
     XINPUT_GAMEPAD p{};
     if (c.active[0] || c.active[1]) {
@@ -723,6 +746,12 @@ void OnFrame(bool screenVisible, bool hudVisible) {
         if (ov.mask & OvLT) p.bLeftTrigger = Trig(ov.lt);
         if (ov.mask & OvRT) p.bRightTrigger = Trig(ov.rt);
         if (ov.mask & OvButtons) p.wButtons = (WORD)ov.buttons;
+    }
+    if (pulse < 330) {
+        // Only the pulse reaches the game while it runs (no sticks: they would move the menu's selection).
+        p = XINPUT_GAMEPAD{};
+        if (pulse < 80) p.bLeftTrigger = 255;
+        else if (pulse >= 160) p.wButtons = XINPUT_GAMEPAD_A;
     }
     {
         std::lock_guard<std::mutex> l(g_lock);

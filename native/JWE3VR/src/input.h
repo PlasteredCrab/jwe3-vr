@@ -34,7 +34,8 @@ void KeyTap(WORD vk);
 
 // Render thread, once per frame after xrEndFrame. screenVisible: the flat screen quad is shown;
 // hudVisible: the in-world HUD panel is shown (pointing at it drives the cursor over the UI).
-void OnFrame(bool screenVisible, bool hudVisible);
+// frontEnd: the flat screen shows the game's front end (main menu, loading); false for the in-park tablet.
+void OnFrame(bool screenVisible, bool hudVisible, bool frontEnd);
 // Where the dominant laser met the flat screen or the HUD panel in the last frame (raw stage space), for the
 // pointer dot. False when it is on neither. Render thread.
 bool ScreenDot(vm::Vec3& stagePos);
