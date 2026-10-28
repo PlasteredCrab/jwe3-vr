@@ -104,11 +104,11 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Park, walking | Off-hand B/Y | Tablet: the game screen with its HUD in front of you |
 | Jeep / helicopter seat, gun seat | Off-hand grip + off-hand B/Y | Tablet (plain off-hand Y belongs to the game there) |
 | Flat screen, tablet; in-world HUD in the park overview | Point with dominant hand | Moves the game's cursor (your real mouse cursor stays put) |
-| Flat screen, tablet; in-world HUD in the park overview | Dominant trigger / grip | Left click / right click |
+| Flat screen, tablet; in-world HUD in the park overview | Dominant trigger / grip | Left click / right click. A quick pull is one click where the pull began; held past 0.3 s it is press-and-hold, and the cursor follows the laser (drag) |
 | Park overview | Dominant laser + trigger | Pick, build, select (the dot shows where) |
-| Park overview | One grip | Drag the park |
+| Park overview | One grip | Drag the park; turn the gripping hand left / right to turn it (10 degree dead zone) |
 | Park overview | Both grips | Scale and rotate the park |
-| Park overview | Off-hand stick | Glide over the park |
+| Park overview | Off-hand stick | Fly over the park toward where you look (a full push is 3 m/s over the model) |
 | Park overview | Dominant A on a vehicle | Take control of it |
 | Park overview | Dominant B on a spot | Nearest ranger team opens the order screen (hold off-hand grip: ACU helicopter); point at the target and pull the trigger. A long weak buzz: no team can take orders (the game refuses them while their facility is not operational, e.g. without power) |
 | Walking | Left stick | Walk where you look |

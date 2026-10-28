@@ -57,6 +57,17 @@ static std::atomic<LPARAM> g_pressPt{-1};
 static std::atomic<bool> g_dragging{false};
 static std::atomic<unsigned> g_heldMoves{0};
 constexpr int kClickSlop = 12;
+// Click or hold (first headset test: the user asked for a quick pull to click once and a longer one to hold and
+// drag): for the first kHoldMs after a press the cursor stays where the press landed unless the laser moves more
+// than kTapSlop pixels; after that, or beyond that, the press becomes a hold and the cursor follows the laser.
+constexpr int kTapSlop = 60;
+constexpr ULONGLONG kHoldMs = 300;
+static std::atomic<ULONGLONG> g_pressAt{0};
+// Squeezing the trigger dips the controller; the press lands where the pull began (the trigger past 0.15), if that
+// was within 400 ms (first headset test: presses landed just below the menu item the user was pointing at).
+static LPARAM g_touchPt = -1;
+static ULONGLONG g_touchAt = 0;
+static bool g_trigTouched = false;
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -452,7 +463,10 @@ void MouseButton(int button, bool down) {
     if (g_mouseDown[button] == down) return;
     if (down && g_cursorPt.load() == -1) return; // no laser point yet
     if (down && !g_mouseDown[0] && !g_mouseDown[1]) {
+        // Press where the trigger pull began (see g_touchPt), when that was recent.
+        if (button == 0 && g_touchPt != -1 && GetTickCount64() - g_touchAt < 400) g_cursorPt = g_touchPt;
         g_pressPt = g_cursorPt.load();
+        g_pressAt = GetTickCount64();
         g_dragging = false;
         // A fresh move right at the press (one pixel over and back): the game's menus took the first press after
         // pad input only as a switch to the mouse, so one pull of the trigger did nothing (seen on the pause menu).
@@ -490,10 +504,10 @@ void MouseButton(int button, bool down) {
     static std::atomic<int> logged{0};
     static ULONGLONG downAt[2]{};
     if (down) downAt[button] = GetTickCount64();
-    else if (logged.load() <= 20) LOGI("laser: %s release after %llu ms", button == 0 ? "left" : "right",
+    else if (logged.load() <= 200) LOGI("laser: %s release after %llu ms", button == 0 ? "left" : "right",
                                        (unsigned long long)(GetTickCount64() - downAt[button]));
-    if (down && logged.load() < 20) LogWindowCounts("before this press");
-    if (down && logged.fetch_add(1) < 20) {
+    if (down && logged.load() < 200) LogWindowCounts("before this press");
+    if (down && logged.fetch_add(1) < 200) {
         LPARAM pt = g_cursorPt.load();
         LOGI("laser: %s press at %d,%d; game window %s", button == 0 ? "left" : "right", (int)(short)LOWORD(pt),
              (int)(short)HIWORD(pt), background ? "NOT in the foreground; activation messages posted first" : "in the foreground; activation messages posted first");
@@ -516,11 +530,15 @@ static void CursorToUV(float u, float v) {
     if ((g_mouseDown[0] || g_mouseDown[1]) && !g_dragging) {
         LPARAM pp = g_pressPt.load();
         int dx = x - (int)(short)LOWORD(pp), dy = y - (int)(short)HIWORD(pp);
-        if (dx * dx + dy * dy <= kClickSlop * kClickSlop) {
+        bool young = GetTickCount64() - g_pressAt.load() < kHoldMs;
+        if (young && dx * dx + dy * dy <= kTapSlop * kTapSlop) {
             if (pt != g_cursorPt.load()) ++g_heldMoves;
-            return; // a click, not a drag: the cursor stays where the button went down
+            return; // still a click: the cursor stays where the button went down
         }
         g_dragging = true;
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 50)
+            LOGI("laser: press became a hold / drag (%s)", young ? "moved beyond the tap slop" : "held past 300 ms");
     }
     if (g_cursorPt.exchange(pt) == pt) return;
     PostMouse(WM_MOUSEMOVE);
@@ -635,6 +653,14 @@ void OnFrame(bool screenVisible, bool hudVisible) {
                 pointing = true;
             }
         }
+    }
+    // Where the trigger pull began, for the press (see g_touchPt).
+    if (c.trigger[dom] > 0.15f && !g_trigTouched) {
+        g_trigTouched = true;
+        g_touchPt = g_cursorPt.load();
+        g_touchAt = now;
+    } else if (c.trigger[dom] < 0.1f) {
+        g_trigTouched = false;
     }
     if (pointing) {
         MouseButton(0, c.trigger[dom] > 0.6f);

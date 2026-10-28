@@ -953,9 +953,19 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
                      e.fov.left * 57.2958f, e.fov.right * 57.2958f, e.fov.up * 57.2958f, e.fov.down * 57.2958f, Length(d),
                      ang, g_swaps[0].width, g_swaps[0].height);
         }
-        LOGI("EndFrame: %u layers (eyes %d, screen %d, hud %d, dot %d, beam %d), result %d, shouldRender %d; %s", layerCount,
+        char hudInfo[160] = "";
+        if (in.hud && eyesOk) {
+            Pose hp = ToPose(g_hudPose);
+            Vec3 d = hp.p - g_rawHead.p;
+            Vec3 fh = Rotate(g_rawHead.q, {0, 0, -1});
+            float dist = Length(d);
+            float off = dist > 1e-3f ? std::acos(std::clamp(Dot(d * (1.f / dist), fh), -1.f, 1.f)) * 57.2958f : 0.f;
+            snprintf(hudInfo, sizeof(hudInfo), "; HUD panel %.2f m away, %.0f deg from where you look, %.0f cm below the eyes",
+                     dist, off, -d.y * 100.f);
+        }
+        LOGI("EndFrame: %u layers (eyes %d, screen %d, hud %d, dot %d, beam %d), result %d, shouldRender %d; %s%s", layerCount,
              (int)eyesOk, (int)(showScreen && g_swaps[2].handle && g_frame.shouldRender), (int)(in.hud && eyesOk),
-             (int)in.dot, (int)in.beam, (int)er, (int)g_frame.shouldRender, eyeInfo);
+             (int)in.dot, (int)in.beam, (int)er, (int)g_frame.shouldRender, eyeInfo, hudInfo);
     }
 }
 

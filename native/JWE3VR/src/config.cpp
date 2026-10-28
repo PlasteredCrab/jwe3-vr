@@ -27,7 +27,7 @@ Mode = aer
 AERPresentLag = 1
 SwapEyes = 0
 ; Extra degrees added to the game's culling FOV so fast head turns never reveal culled edges.
-CullMarginDeg = 8
+CullMarginDeg = 3
 ; Search for the main view constant buffer and log the result (needed before sync mode can work).
 SyncDiscovery = 1
 ; Sync: state of the backbuffer right after the replayed submission: rt (render target) or present.

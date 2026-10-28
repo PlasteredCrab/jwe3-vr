@@ -43,6 +43,7 @@ static bool g_hasFloor = true;
 static Vec3 g_grabStart[2];
 static Vec3 g_grabOffsetStart;
 static float g_grabYawStart = 0.f, g_grabScaleStart = 1.f, g_grabDist = 1.f, g_grabAngle = 0.f;
+static float g_grabHandYaw0 = 0.f; // one-grip grab: the gripping hand's yaw when it closed
 
 static Pose Recentred(const Pose& raw) { return Compose(Inverse(g_recenter), raw); }
 
@@ -128,6 +129,13 @@ static void UpdateGrabLocked() {
         if (!h[i].valid) return;
         Vec3 d = h[i].pose.p - g_grabStart[i];
         g_ovOffset = g_grabOffsetStart - ToGame(g_basis, {d.x, 0.f, d.z}) * g_scale;
+        // Grab and twist (first headset test: the user asked to turn the park with one hand too): turning the
+        // gripping hand left or right turns the park the same way, as the two-hand turn does. A 10 degree dead
+        // zone keeps an ordinary drag from turning it.
+        float turn = std::remainder(YawOf(h[i].pose.q) - g_grabHandYaw0, 2.f * kPi);
+        const float dead = 10.f * kPi / 180.f;
+        turn = std::fabs(turn) <= dead ? 0.f : turn - std::copysign(dead, turn);
+        g_ovYaw = g_grabYawStart + turn;
     } else if (g_grabHands == 3 && h[0].valid && h[1].valid) {
         Vec3 a = h[0].pose.p, b = h[1].pose.p;
         Vec3 d = b - a;
@@ -145,8 +153,22 @@ static void UpdateGrabLocked() {
 void OverviewPan(float right, float forward, float dt) {
     std::lock_guard<std::mutex> l(g_lock);
     if (g_kind != AnchorKind::Overview || g_grab) return;
-    const float realMetresPerSecond = 1.5f;
-    g_ovOffset = g_ovOffset + (g_basis.r * right + g_basis.f * forward) * (realMetresPerSecond * g_scale * dt);
+    // Flying with the off-hand stick, toward where you look (first headset test: along the rig's facing at 1.5 m/s
+    // it was too slow and pointed the wrong way once the view had turned). Squared for fine control near the
+    // centre; a full push is 3 m/s over the model (90 m/s of park at 1:30).
+    const float realMetresPerSecond = 3.f;
+    Vec3 f{0, 0, -1}, r{1, 0, 0};
+    if (g_snap.head.valid) {
+        f = Rotate(g_snap.head.pose.q, {0, 0, -1});
+        r = Rotate(g_snap.head.pose.q, {1, 0, 0});
+    }
+    f.y = r.y = 0;
+    if (Length(f) < 1e-3f || Length(r) < 1e-3f) return;
+    f = Normalize(f);
+    r = Normalize(r);
+    float sr = right * std::fabs(right), sf = forward * std::fabs(forward);
+    Vec3 realMove = r * sr + f * sf;
+    g_ovOffset = g_ovOffset + ToGame(g_basis, realMove) * (realMetresPerSecond * g_scale * dt);
 }
 
 void SetHasFloor(bool hasFloor) {
@@ -171,6 +193,7 @@ void SetOverviewGrab(bool active, int hands) {
         Vec3 d = g_grabStart[1] - g_grabStart[0];
         g_grabDist = std::max(Length({d.x, 0, d.z}), 0.05f);
         g_grabAngle = std::atan2(d.z, d.x);
+        if (hands == 1 || hands == 2) g_grabHandYaw0 = YawOf(g_snap.grip[hands == 1 ? 0 : 1].pose.q);
     }
     g_grab = active;
     g_grabHands = active ? hands : 0;

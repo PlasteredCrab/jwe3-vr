@@ -18,7 +18,7 @@ struct Settings {
     StereoMode stereo = StereoMode::AER;
     int aerPresentLag = 1;        // ticks between Lua setting an eye camera and that frame reaching Present
     bool swapEyes = false;        // flip if AER pairing is one frame off (the world looks inside-out)
-    float cullMarginDeg = 8.0f;   // extra culling FOV so late head motion never shows popped-out edges
+    float cullMarginDeg = 3.0f;   // extra culling FOV so late head motion never shows popped-out edges
     bool syncDiscovery = true;    // look for the view constant buffer and log what was found
     bool syncCaptureRT = true;    // sync: backbuffer state after the replayed submission (true RENDER_TARGET, false PRESENT)
     bool forceVsyncOff = true;    // present with sync interval 0 while the headset paces the game

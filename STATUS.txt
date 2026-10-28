@@ -1,6 +1,27 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.48  First headset test, part 5: THE PARK IN THE HEADSET; the user's control wishes
+    - 0.0.47 seen working by the user: the park shows in the headset (SteamVR's OpenXR log: projection views taken,
+      no format errors; eye images 8-bit sRGB (29) - SteamVR offered 29 91 2 10 24 40 55 45 20, no plain 8-bit
+      UNORM - converted from the game's format 24). The user's report: "horribly low quality", the left eye
+      "freaking out" on fast head turns, one-grip drag works but slow, no HUD seen, nothing else did anything.
+      A sync warning remains every ~20 s in vrcompositor.txt (was every frame).
+    - Log findings: the park the keyboard loaded had the game paused ("time step: game 0.0 s") and no operational
+      response facility (send team: reason 2) - not the Sandbox park of 0.0.39, so possibly the campaign autosave.
+      The HUD panel was submitted every frame and the laser hit it; its content is still to be checked (the HUD dump
+      now logs its alpha). Menu presses this time landed just below CONTINUE and on WORKSHOP, not on the item.
+    - Quality: the image was 1920x1200 spread over +-69 x +-58 deg (the game window's 16:10 aspect plus an 8 deg
+      culling margin), about half the headset's resolution per eye, each eye updated every other frame, and the
+      game's TAA blends the two eyes' frames (per-eye TAA needs the view CB, unavailable). CullMarginDeg 8 -> 3
+      (default and the installed ini). To try in the game: anti-aliasing off or FXAA, motion blur off, a higher
+      resolution; Stereo Mode = mono in the ini to compare (no depth, but every frame for both eyes).
+    - Controls the user asked for: off-hand stick flies toward where you look, 3 m/s over the model (was 1.5 along
+      the rig's facing), squared response; one grip also turns the park with the hand's yaw (10 deg dead zone), as
+      two grips do; trigger: a quick pull clicks where the pull began (the trigger past 0.15, within 400 ms - squeezing
+      dips the controller), held past 300 ms or moved over 60 px it becomes press-and-hold with the cursor following
+      (drag). Press logs raised to 200; the EndFrame line gives the HUD panel's distance and angle. Not yet tried.
+
 2026-10-28  0.0.47  First headset test, part 4: the real reason for the black headset - the eye images' format
     - 0.0.46 seen working: the trigger on CONTINUE loaded the park (no keyboard or mouse input in between), and
       SteamVR's sync errors stopped. The headset (and SteamVR's VR View) still showed black in the park.
