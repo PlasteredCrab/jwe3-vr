@@ -113,6 +113,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep / helicopter seat, gun seat | Off-hand grip + off-hand B/Y | Tablet (plain off-hand Y belongs to the game there) |
 | Flat screen, tablet; in-world HUD in the park overview | Point with dominant hand | Moves the game's cursor (your real mouse cursor stays put) |
 | Flat screen, tablet; in-world HUD in the park overview | Dominant trigger / grip | Left click / right click. A quick pull is one click where the pull began; held past 0.3 s it is press-and-hold, and the cursor follows the laser (drag) |
+| Site map (on the flat screen) | Sticks, A / B / X / Y, grips | The pad's: the off-hand stick moves the map, B leaves it; the triggers stay the laser's click |
 | Park overview | Dominant laser + trigger | Pick, build, select (the dot shows where) |
 | Park overview | One grip | Grab the park: the spot in your hand stays in your hand (up and down too); turn the hand to turn the park around it (10 degree dead zone) |
 | Park overview | Both grips | Zoom and turn around the point between your hands (hands apart: closer) |
