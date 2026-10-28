@@ -166,6 +166,53 @@ local AdaptSign = function(t, axis, nErr, nCmd)
     t[sLast] = nErr
 end
 
+-- Helicopter or aviary drone (the game's drive / gunner mode objects carry bIsDrone and nVehicleType).
+Gameplay.IsAirVehicle = function(oMode)
+    if global.type(oMode) ~= "table" then return false end
+    if oMode.bIsDrone then return true end
+    local V = oMode.VehiclesAPI
+    return V ~= nil and oMode.nVehicleType ~= nil and oMode.nVehicleType == V.VehicleType_Helicopter
+end
+
+-- Photo mode from the active drive or gun seat, on the press of the dominant stick click. The game's own switch:
+-- the drive mode's _OnSwitchToPhotoButtonPressed (which checks VehicleUtils.CanSwitchToPhoto), or in a gun seat the
+-- same "RequestChangeUI" event its Advance sends when its photo button is pressed.
+Gameplay.PhotoClick = function(bDown, tPrev)
+    if not bDown then
+        tPrev.photoLatch = false
+        return
+    end
+    if tPrev.photoLatch then return end
+    tPrev.photoLatch = true
+    local bOk, sErr = pcall(function()
+        local oGun = Gameplay.oGunnerMode
+        if Gameplay.sUIMode == "photo" then
+            -- The same click leaves photo mode (the game's Helicopter_SwitchToPhoto toggles too).
+            local oPhoto = Gameplay.oUIMode
+            if oPhoto and oPhoto._ReturnToPreviousMode and not oPhoto.tPhoto then
+                oPhoto:_ReturnToPreviousMode()
+                Bridge.Text("photo: asked the game to leave photo mode")
+            end
+            return
+        elseif oGun and Gameplay.sUIMode == "gunner" then
+            local VehicleUtils = require("Helpers.VehicleUtils")
+            if not VehicleUtils.CanSwitchToPhoto(oGun.nVehicleEntityID, oGun.VehiclesAPI) then
+                Bridge.Text("photo: this vehicle has no photo mode")
+                return
+            end
+            oGun.iUIMode:OnModeEvent("RequestChangeUI", "VehiclePhoto", {Vehicle = oGun.nVehicleEntityID,
+                DeleteVehicleWhenDone = oGun.bDeleteVehicleWhenDone, bDeleteVehicleOffScreenWhenDone = oGun.bDeleteVehicleOffScreenWhenDone,
+                bWasFirstPerson = oGun.bWasFirstPerson, tGuestModeState = oGun.tGuestModeState})
+        else
+            local oDrive = Gameplay.oUIMode
+            if not oDrive or not oDrive._OnSwitchToPhotoButtonPressed then return end
+            oDrive:_OnSwitchToPhotoButtonPressed()
+        end
+        Bridge.Text("photo: asked the game for photo mode")
+    end)
+    if not bOk then Bridge.Text("photo: switch failed: " .. tostring(sErr)) end
+end
+
 -- Sight dot in the gun seats: where the gun's own aim ray meets the world (not the hand's: the gun lags the hand,
 -- and the dart goes where the gun points). The game's crosshair is part of its UI, which the in-world HUD moves onto
 -- the panel, so in the headset nothing else shows where a dart will land. Returns the point and what it is on.
@@ -698,12 +745,16 @@ Gameplay.Advance = function(_nDt, _nGameDt)
         -- JWE3 switches to photo mode with pad d-pad right (up / down / left switch to the chase camera; seen in
         -- game, run 92), and the VR controllers have no d-pad: here the dominant stick click is d-pad right (pad RS
         -- does nothing in the driver's seat). Not with both clicks, which recentre. In photo mode, A takes the photo.
+        -- Helicopters and the aviary drone have their own photo switch (Helicopter_SwitchToPhoto; their d-pad
+        -- cycles the drone's equipment, run 148), so there the click asks the game's drive mode directly.
         local bClickDom = Has(nBits, dom == 1 and Btn.ClickR or Btn.ClickL)
         local bClickOff = Has(nBits, dom == 1 and Btn.ClickL or Btn.ClickR)
+        local bAir = Gameplay.IsAirVehicle(Gameplay.oUIMode)
         if bClickDom then
             nButtons = nButtons & ~(0x0040 | 0x0080)
-            if not bClickOff then nButtons = nButtons | 0x0008 end -- XINPUT_GAMEPAD_DPAD_RIGHT
+            if not bClickOff and not bAir then nButtons = nButtons | 0x0008 end -- XINPUT_GAMEPAD_DPAD_RIGHT
         end
+        if bAir then Gameplay.PhotoClick(bClickDom and not bClickOff, tPrev) end
         nMask = nMask + Ov.Buttons
     elseif nKind == K.Gunner then
         nPad = Bridge.Pad.Passthrough
@@ -713,6 +764,11 @@ Gameplay.Advance = function(_nDt, _nGameDt)
             nMask = nMask + Ov.RX + Ov.RY
             rx, ry = cx, cy
         end
+        -- Dominant stick click: photo mode, as in the driver's seat (the gun seats have no d-pad mapping for it).
+        local bClickDom = Has(nBits, dom == 1 and Btn.ClickR or Btn.ClickL)
+        local bClickOff = Has(nBits, dom == 1 and Btn.ClickL or Btn.ClickR)
+        if bClickDom then nButtons = nButtons & ~(0x0040 | 0x0080) end
+        Gameplay.PhotoClick(bClickDom and not bClickOff, tPrev)
         local bSight, vSight, nOn = pcall(Gameplay.GunSight)
         Bridge.Pointer(bSight and vSight or nil)
         Gameplay.nSightOn = bSight and nOn or nil

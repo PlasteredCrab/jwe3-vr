@@ -15,7 +15,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > own model hidden), and the
 > virtual Xbox pad reaches the game (a scripted pad drove the jeep, lifted the helicopter off and entered both gun seats).
 > The guest view (walking) puts the rig on the frame too, and a scripted stick walked it; photo mode works from
-> the jeep, the pause menu lands on the HUD panel, and leaving a park and loading it again works. With scripted VR
+> the jeep, the capture helicopter and the aviary drone (a photo was taken from the drone), the pause menu lands on the HUD panel, and leaving a park and loading it again works. With scripted VR
 > controllers in a Sandbox park built remotely (paths, response facility, hatchery, enclosure, aviary): the on-foot
 > dart rifle tranquillised a dinosaur (the game's panel: TRANQUILIZED) and the medicine gun cured one, the radio
 > called a jeep (a Fire Flare task in the game's list) and opened the team order screen, and the aviary drone flew,
@@ -68,7 +68,8 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
   (the game's crosshair is on the HUD panel, not in the world); the trigger fires; the game's own ammo switch keeps
   the HUD right. The gunner character (who stands where your eyes are) is hidden while you are in the seat and
   comes back on the flat screen.
-- Photo mode from the jeep: click the stick, and A takes the photo (the capture helicopter has no photo mode).
+- Photo mode from the jeep, the capture helicopter and the aviary drone, from the driver's seat or the gun seat:
+  click the stick (again to go back), and A takes the photo.
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
   ranger team or ACU helicopter into the game's own order screen.
 - On-foot ranger: while walking, carry a dart rifle, a medicine gun or a radio. Medicine darts count toward the
@@ -128,7 +129,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Aviary drone | Left stick, off-hand Y | Fly; once airborne, Aim Mode (then as the gun seat: hand aims, trigger uses the equipment, off-hand stick left / right picks it) |
 | Jeep / helicopter seat, gun seat | Dominant B | The game's Back (pad B): gun seat to driver's seat, then out of the vehicle |
 | Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
-| Jeep seat | Dominant stick click | Photo mode (the game's pad d-pad right; the capture helicopter has no photo mode) |
+| Jeep / helicopter / drone seat, gun seat | Dominant stick click | Photo mode, and back (the jeep: the game's pad d-pad right; helicopter and drone: their own photo switch, which no pad button reaches) |
 | Photo mode | Dominant A | Take the photo (pad A); the game then shows the photo's details to submit or discard |
 | Photo mode | Dominant B | Back (pad B) |
 | Gun seat | Dominant hand | Aim (the gun follows it; the dot shows where the gun points, which is where the dart goes) |
@@ -254,6 +255,8 @@ haptics, and anything about how it looks or feels in the headset (two-hand scale
    need something to scan. Dominant B goes back to the driver's seat ("shown again").
 10. **Photo mode:** in the jeep's driver's seat, click the dominant stick; dominant A takes the photo, then the game shows
     its details to submit or discard. Log: "ui mode photo in". Check that the photo shows what you were looking at.
+    The same click works in the helicopter and the aviary drone (log: "photo: asked the game for photo mode"), and
+    clicking again there goes back.
 11. **Helicopter:** take control of the capture helicopter. You are put in its seat (log: "asked for the
     first-person camera on vehicle ... try 1"), the right trigger lifts off, and off-hand Y in the air goes to its
     gun seat.
