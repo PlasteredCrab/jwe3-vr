@@ -202,9 +202,12 @@ game folder. ACSE is not required.
 
 ## First headset test
 
-None of this has been seen in a worn headset yet (remote runs without the headset have seen the log lines of
-steps 2, 4, 6 (the tablet), 6a and 8-12 and the rig on the rendered frame; the controller steps ran with scripted controller
-input, `JWE3VR_vr.txt`, not real controllers). Go through it in order; each step names the line in
+None of this has been seen in a worn headset yet. Remote runs without the headset have seen the rig on the
+rendered frame and the log lines of steps 2, 4, 5, 6, 6a and 8-12, the controller steps with scripted controller
+input (`JWE3VR_vr.txt`), not real controllers: laser on the HUD panel and the ground, take control, drag and turn
+the park, recentre, tablet, pause menu, photo mode, gun seat aim, steering wheel, walking, snap turn, tool cycle
+and the hold-B exit. Not seen anywhere: a shot fired, darts or medicine on a dinosaur (the test park has none),
+haptics, two-hand scale, and anything about how it looks or feels in the headset. Go through it in order; each step names the line in
 `Win64\ovldata\JWE3VR\JWE3VR.log` that says it works. When a step fails, note which one and keep the log.
 
 1. **Main menu:** the menu is a large flat screen in front of you and the game window keeps working. Log:
