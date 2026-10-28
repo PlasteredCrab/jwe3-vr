@@ -47,6 +47,7 @@ static UINT g_failedW = 0, g_failedH = 0; // swapchain size that failed last (no
 static UINT g_hudFailedW = 0, g_hudFailedH = 0;
 static DXGI_FORMAT g_hudFailedFormat = DXGI_FORMAT_UNKNOWN;
 static Swap g_swaps[5]; // Left, Right, Screen, Hud (the UI texture's size and format), Dot (kDotSize)
+static DXGI_FORMAT g_dotSwapFormat = DXGI_FORMAT_UNKNOWN; // the Dot swapchain's own (8-bit) format
 static XrPosef g_hudPose{{0, 0, 0, 1}, {0, 1.4f, -1.4f}};
 static bool g_hudPlaced = false;
 static Pose g_rawHead;
@@ -713,10 +714,22 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
         LOGE("headset runtime has no swapchain format compatible with the game's backbuffer (%d); turn HDR off", (int)bb);
         return false;
     }
+    // The pointer dot (and laser beam) is drawn from an 8-bit RGBA image with alpha: give it an 8-bit swapchain even
+    // when the eyes use the game's 10-bit format (2-bit alpha, and render.cpp builds the image only in 8 bits).
+    g_dotSwapFormat = g_format;
+    for (DXGI_FORMAT pref : {DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, DXGI_FORMAT_B8G8R8A8_UNORM_SRGB, DXGI_FORMAT_R8G8B8A8_UNORM,
+                             DXGI_FORMAT_B8G8R8A8_UNORM}) {
+        bool found = false;
+        for (int64_t f : fmts) found = found || (DXGI_FORMAT)f == pref;
+        if (found) {
+            g_dotSwapFormat = pref;
+            break;
+        }
+    }
     for (int i = 0; i < 5; ++i) {
         if (i == (int)SwapId::Hud) continue; // EnsureHudSwapchain: sized and formatted like the game's UI texture
         UINT w = i == 4 ? kDotSize : width, h = i == 4 ? kDotSize : height;
-        if (!CreateSwap(g_swaps[i], w, h, g_format)) {
+        if (!CreateSwap(g_swaps[i], w, h, i == 4 ? g_dotSwapFormat : g_format)) {
             DestroySwapchains(); // all or none: EndFrame must never reference a missing one
             return false;
         }
@@ -724,7 +737,8 @@ bool EnsureSwapchains(UINT width, UINT height, DXGI_FORMAT bb) {
     g_screenAspect = (float)width / (float)height;
     rig::SetRenderAspect(g_screenAspect);
     g_failedW = g_failedH = 0;
-    LOGI("swapchains %ux%u format %d (backbuffer %d)", width, height, (int)g_format, (int)bb);
+    LOGI("swapchains %ux%u format %d (backbuffer %d), pointer dot format %d", width, height, (int)g_format, (int)bb,
+         (int)g_dotSwapFormat);
     return true;
 }
 
@@ -803,7 +817,8 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hud{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const XrCompositionLayerBaseHeader* layers[4];
+    XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    const XrCompositionLayerBaseHeader* layers[5];
     uint32_t layerCount = 0;
     bool showProjection = in.projection, showScreen = in.screen;
 
@@ -840,6 +855,30 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
         hud.pose = g_hudPose;
         hud.size = {w, w * g_swaps[3].height / (float)g_swaps[3].width};
         layers[layerCount++] = (XrCompositionLayerBaseHeader*)&hud;
+    }
+    if (in.beam && g_swaps[4].handle && g_frame.shouldRender && g_rawHeadValid) {
+        // A thin quad along the laser, turned about its length to face the head (the dot's disc image stretched:
+        // a bright core with dark edges). Under the dot, so the dot stays on top where they meet.
+        Vec3 axis = in.beamTo - in.beamFrom;
+        float len = Length(axis);
+        if (len > 0.05f) {
+            Vec3 up = axis * (1.f / len);
+            Vec3 mid = in.beamFrom + axis * 0.5f;
+            Vec3 toHead = g_rawHead.p - mid;
+            Vec3 back = toHead - up * Dot(toHead, up);
+            if (Length(back) < 1e-4f) back = Cross(up, Vec3{1, 0, 0});
+            back = Normalize(back);
+            Vec3 right = Normalize(Cross(up, back));
+            back = Cross(right, up);
+            beam.space = g_stage;
+            beam.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            beam.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            beam.subImage.swapchain = g_swaps[4].handle;
+            beam.subImage.imageRect = FullRect(g_swaps[4]);
+            beam.pose = ToXr({QuatFromBasis(right, up, back), mid});
+            beam.size = {0.006f, len};
+            layers[layerCount++] = (XrCompositionLayerBaseHeader*)&beam;
+        }
     }
     if (in.dot && g_swaps[4].handle && g_frame.shouldRender && g_rawHeadValid) {
         // A small disc facing the head; its size grows with distance so it keeps the same angular size.
@@ -887,7 +926,7 @@ bool RawAim(int hand, Pose& out) {
     return true;
 }
 
-DXGI_FORMAT DotFormat() { return g_format; }
+DXGI_FORMAT DotFormat() { return g_dotSwapFormat; }
 
 bool HudRect(Vec3& centre, Vec3& right, Vec3& up, float& halfW, float& halfH) {
     if (!g_swaps[3].handle) return false;

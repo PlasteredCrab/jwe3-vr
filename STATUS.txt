@@ -1,6 +1,21 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.45  First headset test, part 2: the pointer dot was never drawn; a laser beam (Quest through Link)
+    - The user saw no laser and no dot. Cause: the dot's swapchain was created in the game's format (10-bit,
+      DXGI 24 on this PC) and its image is built only in 8 bits, so EnsureDotTexture failed silently every frame -
+      the park laser's dot, the gun sight and the on-foot dot can never have shown. The dot now gets its own 8-bit
+      swapchain, and a failure is logged.
+    - New: a laser beam from the dominant hand (a thin quad facing the head, the dot's image stretched): to the dot
+      when the dot is on that hand's ray (menus, tablet, HUD panel, park laser, on-foot tools), and 2 m long while
+      the flat screen is up and the laser misses it. No controller models yet. Not yet seen in the headset.
+    - In the park (loaded with the keyboard) the monitor showed the rig at work - head tracking moved the camera
+      and the controllers did things - but the headset showed nothing of it. The mod's submitted eye images were
+      checked (JWE3VR_aer.req): both eyes have the park at full brightness, 57-71 fps, state 5, no OpenXR errors.
+      The menu (a quad layer) had reached the headset, the park (projection layer) did not. Open question; the Link
+      dashboard (OculusDash) was running and may have covered SteamVR's view. 10:01-10:03 the session sat in state 3
+      (not visible) until SteamVR closed it; the new retry kept trying every ~6 s without trouble.
+
 2026-10-28  0.0.44  First headset test, part 1: the main menu (user wearing a Quest through Virtual Desktop)
     - First worn session ever: OpenXR reached state 5 (focused); the main menu showed as the flat screen in front of
       the user, and pointing moved the game's cursor (menu items highlighted). Frame rate in the headset at the

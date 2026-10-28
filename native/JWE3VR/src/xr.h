@@ -52,6 +52,8 @@ struct Layers {
     bool hud = false;        // in-world HUD panel (UI texture, premultiplied alpha)
     bool dot = false;        // pointer dot at dotPos (stage space)
     vm::Vec3 dotPos;
+    bool beam = false;       // laser beam from beamFrom to beamTo (stage space; drawn with the dot's image)
+    vm::Vec3 beamFrom, beamTo;
 };
 void EndFrame(const EyeView eyes[2], const Layers& layers);
 // The pointer dot image (DXGI format of the dot swapchain) and its size in pixels.

@@ -251,7 +251,12 @@ static bool EnsureDotTexture() {
     g_dotTex = nullptr; // swapchain format changed (OpenXR re-init): rebuild; the old one may be in flight
     bool bgra = fmt == DXGI_FORMAT_B8G8R8A8_UNORM || fmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
     bool rgba = fmt == DXGI_FORMAT_R8G8B8A8_UNORM || fmt == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
-    if (!g_device || (!bgra && !rgba)) return false;
+    if (!g_device || (!bgra && !rgba)) {
+        // Until 0.0.45 the dot's swapchain had the game's format (10-bit on the first headset test) and no dot was
+        // ever drawn; xr.cpp now picks an 8-bit one for it. Say so if a runtime has none.
+        JVR_LOG_ONCE("pointer: no dot - its swapchain format %d is not 8-bit RGBA/BGRA", (int)fmt);
+        return false;
+    }
     const UINT n = xr::kDotSize, pitch = 256; // n * 4 bytes = 256
     std::vector<uint8_t> px((size_t)pitch * n, 0);
     for (UINT y = 0; y < n; ++y)
@@ -757,17 +762,38 @@ static void OnPresent(IDXGISwapChain* sc) {
     // puts it (the park laser, a gun's sight, the on-foot tools).
     vm::Vec3 screenDot;
     bool onScreen = input::ScreenDot(screenDot);
-    if (haveSwaps && (onScreen || g_pointerVisible.load()) && EnsureDotTexture()) {
-        vm::Vec3 dotPos = screenDot;
-        if (!onScreen) {
-            std::lock_guard<std::mutex> l(g_pointerLock);
-            dotPos = g_pointerStage;
+    bool luaDot = g_pointerVisible.load();
+    vm::Vec3 dotPos = screenDot;
+    if (!onScreen && luaDot) {
+        std::lock_guard<std::mutex> l(g_pointerLock);
+        dotPos = g_pointerStage;
+    }
+    // A laser beam from the dominant hand (the mod draws no controller models): to the dot when the dot is on that
+    // hand's ray (menus, tablet, HUD panel, park laser, on-foot tools - not a gun sight still catching up with the
+    // hand), or 2 m long while the flat screen is up and the laser misses it, so you can find the screen.
+    vm::Pose aim;
+    bool beam = false;
+    vm::Vec3 beamTo;
+    if (xr::RawAim(config::Get().leftHanded ? 0 : 1, aim)) {
+        vm::Vec3 dir = vm::Rotate(aim.q, {0, 0, -1});
+        if (onScreen || luaDot) {
+            vm::Vec3 d = dotPos - aim.p;
+            float along = vm::Dot(d, dir);
+            if (along > 0.05f && vm::Length(d - dir * along) < 0.03f * along + 0.02f) beam = true, beamTo = dotPos;
+        } else if (screen) {
+            beam = true, beamTo = aim.p + dir * 2.f;
         }
+    }
+    if (haveSwaps && (onScreen || luaDot || beam) && EnsureDotTexture()) {
         if (ID3D12Resource* img = xr::AcquireImage(xr::SwapId::Dot)) {
             CopyToImage(g_dotTex, D3D12_RESOURCE_STATE_COPY_SOURCE, img);
             xr::ReleaseImage(xr::SwapId::Dot);
-            layers.dot = true;
+            layers.dot = onScreen || luaDot;
             layers.dotPos = dotPos;
+            layers.beam = beam;
+            layers.beamFrom = aim.p;
+            layers.beamTo = beamTo;
+            JVR_LOG_ONCE("pointer: dot / laser beam drawn (dot format %d)", (int)xr::DotFormat());
         }
     }
 
