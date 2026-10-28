@@ -14,6 +14,15 @@ JWE3 VR - status log (newest first)
       swapchains, render passes, eye images, xrEndFrame, input, xrWaitFrame / xrBeginFrame, the game's own Present)
       and the OpenXR state, again every 10 s while it lasts. It sends nothing. Not yet run (SteamVR is off; a remote
       run would not reach the frame code).
+    - Research for a sharper frame (JWE3.exe, no code change): the Display section's ResolutionScale is read as is and
+      ResolutionScaleMax is clamped to 0.25..2.0 (0x140270e57: below 0.25 -> 0.25, else min(2.0, value)); the
+      user's file has no ResolutionScaleMax (so the default cap applies; 1.0 judging by the menu). That scale renders
+      inside the game and is filtered down into the same 1920x1200 backbuffer the mod copies, so it would cut
+      aliasing, not raise pixels per degree in the headset (and DLSS may ignore it). More pixels per degree need a
+      bigger backbuffer: the settings UI keeps separate "resolutions" and "borderlessResolutions" lists
+      (0x140542968), so whether borderless can be set above the monitor's size is still open; NVIDIA DSR (a bigger
+      desktop) would do it, and the mod's eye swapchains follow the backbuffer's size. Waiting for the user's OK to try
+      a 2880x1800 frame remotely with their settings restored afterwards.
 
 2026-10-28  0.0.55  The site map takes the sticks
     - The user's second VR View recording (E:\Videos6-10-28 13-21-32.mov, 10 min): the park from above, the
