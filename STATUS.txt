@@ -1,6 +1,26 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.44  First headset test, part 1: the main menu (user wearing a Quest through Virtual Desktop)
+    - First worn session ever: OpenXR reached state 5 (focused); the main menu showed as the flat screen in front of
+      the user, and pointing moved the game's cursor (menu items highlighted). Frame rate in the headset at the
+      menu: 45-54 fps (step 7 of the checklist still to look at).
+    - No pointer on the menus: the game's cursor is the Windows cursor, never in the images the headset shows, and
+      the mod's dot was only used in the park. The dot now also sits where the laser meets the flat screen or the
+      HUD panel (at the smoothed cursor, where a press lands).
+    - The trigger did nothing: presses were posted, but (new per-press log) the first two landed on the logo above
+      the menu, and later ones came while another window was in front (Chrome when the user typed, then the Claude
+      app) - JWE3 ignores posted clicks unless it believes it is active. A press while the game is in the background
+      now first posts the window-activation messages to the game's own window (as the FOCUS pad step did in remote
+      runs); the real foreground window is not changed. Not yet tried in the headset.
+    - VR did not come back after SteamVR restarted (09:45: the session ended, the one retry failed with
+      FORM_FACTOR_UNAVAILABLE, and the mod never tried again). It now retries every 5 s.
+    - 09:50: the VR runtimes crashed together - SteamVR's vrserver (abort in ucrtbase, 0xc0000409), vrdashboard and
+      vrmonitor, and the Oculus dashboard (OculusDash.exe) - and the game went down with them (exception 0x000fdead,
+      raised in a system DLL: SteamVR's client library ends its host process when vrserver dies). The session had
+      been asked to stop 35 s earlier. No display-driver event, nothing in the Sophos logs, no Frontier report;
+      Steam's own error reporter (for Valve) was left to the user.
+
 2026-10-28  0.0.43  Steering the helicopter to the dinosaurs remotely (runs 152-153; stopped at the user's request)
     - The "aimdino" / "sick" debug lines now give the nearest dinosaur's bearing from the camera and height below it.
       With it the capture helicopter was turned (left stick: about 20 degrees a second at 2 fps) and flown (left

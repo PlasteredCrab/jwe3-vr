@@ -4,6 +4,7 @@
 #pragma once
 
 #include "common.h"
+#include "vrmath.h"
 
 namespace jvr::input {
 
@@ -34,6 +35,9 @@ void KeyTap(WORD vk);
 // Render thread, once per frame after xrEndFrame. screenVisible: the flat screen quad is shown;
 // hudVisible: the in-world HUD panel is shown (pointing at it drives the cursor over the UI).
 void OnFrame(bool screenVisible, bool hudVisible);
+// Where the dominant laser met the flat screen or the HUD panel in the last frame (raw stage space), for the
+// pointer dot. False when it is on neither. Render thread.
+bool ScreenDot(vm::Vec3& stagePos);
 
 // Debug aids for remote tests (render thread, every Present): plays JWE3VR_pad.txt (see input.cpp), and a
 // one-line summary of the game's XInput polling and window focus for the log.

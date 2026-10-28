@@ -641,7 +641,17 @@ static void OnPresent(IDXGISwapChain* sc) {
     }
     if (!g_xrTried && now >= g_reinitAt) {
         g_xrTried = true;
-        if (!xr::Init(g_device, g_queue)) LOGE("OpenXR init failed; is a headset runtime (SteamVR / Oculus / VDXR) running?");
+        if (!xr::Init(g_device, g_queue)) {
+            // Keep trying every 5 s: right after a session ends the runtime can be without a headset for a while
+            // (first headset test: SteamVR restarted when the headset slept, the one retry failed with
+            // FORM_FACTOR_UNAVAILABLE, and VR stayed off until the game was restarted).
+            static int failures = 0;
+            if (failures++ % 12 == 0)
+                LOGE("OpenXR init failed; is a headset runtime (SteamVR / Oculus / VDXR) running? Retrying every 5 s");
+            xr::Shutdown();
+            g_reinitAt = now + 5000;
+            g_xrTried = false;
+        }
     }
     if (!xr::Running()) {
         xr::BeginFrame(); // polls session events until the runtime is ready
@@ -743,9 +753,13 @@ static void OnPresent(IDXGISwapChain* sc) {
         }
         passes::ClearHud(); // ready for the next frame's UI (ordered after the copy on the same queue)
     }
-    if (haveSwaps && g_pointerVisible.load() && EnsureDotTexture()) {
-        vm::Vec3 dotPos;
-        {
+    // The dot goes where the laser meets the flat screen or the HUD panel when it does (input.cpp), else where Lua
+    // puts it (the park laser, a gun's sight, the on-foot tools).
+    vm::Vec3 screenDot;
+    bool onScreen = input::ScreenDot(screenDot);
+    if (haveSwaps && (onScreen || g_pointerVisible.load()) && EnsureDotTexture()) {
+        vm::Vec3 dotPos = screenDot;
+        if (!onScreen) {
             std::lock_guard<std::mutex> l(g_pointerLock);
             dotPos = g_pointerStage;
         }

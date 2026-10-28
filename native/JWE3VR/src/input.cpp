@@ -409,6 +409,18 @@ void MouseButton(int button, bool down) {
             PostMessageW(g_hwnd, WM_MOUSEMOVE, MouseKeys(), pt);
         }
     }
+    // JWE3 takes posted clicks only while it believes it is the active window (remote runs: the FOCUS step helped).
+    // In the headset nothing shows which window has focus, and other programs take it (first headset test: Chrome,
+    // then the Claude app came to the front and the trigger stopped working), so a press while the game is in the
+    // background first tells the game window it is active - messages to its own window only; the real foreground
+    // window is not changed.
+    bool background = down && g_hwnd && GetForegroundWindow() != g_hwnd;
+    if (background) {
+        PostMessageW(g_hwnd, WM_ACTIVATEAPP, TRUE, 0);
+        PostMessageW(g_hwnd, WM_NCACTIVATE, TRUE, 0);
+        PostMessageW(g_hwnd, WM_ACTIVATE, WA_ACTIVE, 0);
+        PostMessageW(g_hwnd, WM_SETFOCUS, 0, 0);
+    }
     g_mouseDown[button] = down;
     if (!down && g_heldMoves.load()) {
         JVR_LOG_ONCE("laser: the cursor was held still during a click (%u small moves left out)", g_heldMoves.load());
@@ -416,7 +428,14 @@ void MouseButton(int button, bool down) {
     }
     if (button == 0) PostMouse(down ? WM_LBUTTONDOWN : WM_LBUTTONUP);
     else PostMouse(down ? WM_RBUTTONDOWN : WM_RBUTTONUP);
-    JVR_LOG_ONCE("laser: first %s press posted to the game window", button == 0 ? "left" : "right");
+    // Every press for a while, with where it went and whether the game was in front: JWE3 ignores clicks while its
+    // window is in the background (first headset test: the menu highlighted under the laser, the trigger did nothing).
+    static std::atomic<int> logged{0};
+    if (down && logged.fetch_add(1) < 20) {
+        LPARAM pt = g_cursorPt.load();
+        LOGI("laser: %s press at %d,%d; game window %s", button == 0 ? "left" : "right", (int)(short)LOWORD(pt),
+             (int)(short)HIWORD(pt), background ? "NOT in the foreground (activation messages posted first)" : "in the foreground");
+    }
 }
 
 // A key press and release posted to the game window (JWE3 ignores posted keys in its menus; kept for the bridge op).
@@ -452,6 +471,17 @@ static void SmoothCursor(float u, float v, float dt) {
     CursorToUV(g_cursorSmooth.x, g_cursorSmooth.y);
 }
 
+// Where the laser meets the flat screen or the HUD panel, for the pointer dot (render thread only, like OnFrame).
+// The game's own cursor is the Windows cursor, which is never in the images the headset shows.
+static Vec3 g_screenDotPos;
+static ULONGLONG g_screenDotAt = 0;
+
+bool ScreenDot(Vec3& stagePos) {
+    if (!g_screenDotAt || GetTickCount64() - g_screenDotAt > 100) return false;
+    stagePos = g_screenDotPos;
+    return true;
+}
+
 // Laser from a hand onto the flat screen or the HUD panel (both live in raw stage space).
 static bool ScreenPointer(int hand, float dt, bool hud = false) {
     Vec3 centre, right, up;
@@ -462,6 +492,12 @@ static bool ScreenPointer(int hand, float dt, bool hud = false) {
     Vec3 dir = Rotate(aim.q, {0, 0, -1});
     if (!RayRect(aim.p, dir, centre, right, up, hw, hh, u, v, t)) return false;
     SmoothCursor(u, v, dt);
+    // The dot at the smoothed cursor, which is where a press lands (a little in front of the surface).
+    Vec3 normal = Normalize(Cross(right, up));
+    if (Dot(normal, aim.p - centre) < 0) normal = normal * -1.f;
+    g_screenDotPos = centre + right * ((g_cursorSmooth.x * 2.f - 1.f) * hw) + up * ((1.f - g_cursorSmooth.y * 2.f) * hh) +
+                     normal * 0.005f;
+    g_screenDotAt = GetTickCount64();
     return true;
 }
 
