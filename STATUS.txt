@@ -1,6 +1,15 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.28  Tap and hold of dominant B while walking timed from the press (runs 112-113)
+    - Scripted taps of dominant B while walking (the on-foot tool cycle) partly failed at the remote 1.5-3 fps:
+      a 0.45 s tap was sometimes missed, and a 0.6 s tap counted as a 1.0 s hold and left walking - adding up tick
+      intervals also counted the interval before the press. Both holds (leave walking, cycle the tool) are now timed
+      from the first tick that saw the button down, on the wall clock. Run 113: four 0.6 s taps cycled dart rifle ->
+      medicine gun -> radio -> empty hands without leaving, and a 2.5 s hold left at 0.9 s. At 90 fps in the
+      headset the difference is a frame; on slow frames it is what keeps a tap a tap.
+    - New log line "on foot: <tool>" when the tool changes (it was only a haptic pulse).
+
 2026-10-27  0.0.27  More of the controller layer on scripted input: recentre, glide, gun aim, lift-off (runs 109-111)
     - Both stick clicks recentre ("recentred: yaw -20.3 deg, head height 0.71 m" - the headset rests on a desk).
     - Off-hand stick in the park overview glides: the response facility moved down the view and grew.

@@ -352,7 +352,10 @@ Gameplay.Advance = function(_nDt, _nGameDt)
     local bImmersive = nKind == K.Overview or nKind == K.Ground or nKind == K.Seat or nKind == K.Gunner
     -- The pad-B pulse that leaves walking ends with walking: the game leaves the guest view on the pulse's first
     -- frames, and what was left of it must not press B the next time you walk.
-    if nKind ~= K.Ground then Gameplay.nBackPulse, Gameplay.nBackTicks = 0, 0 end
+    if nKind ~= K.Ground then
+        Gameplay.nBackPulse, Gameplay.nBackTicks, Gameplay.nBDownAt = 0, 0, nil
+        Ranger.nDownAt, Ranger.nHeld = nil, 0
+    end
 
     -- Tablet: off-hand B/Y shows the flat game screen (with its HUD) in front of you. In a vehicle the off-hand
     -- grip must be held too: there plain off-hand Y is pad Y, the game's Aim Mode (JWE3: into the gun seat).
@@ -401,8 +404,11 @@ Gameplay.Advance = function(_nDt, _nGameDt)
         local tCtl = {tl = tl, tr = tr, gl = gl, gr = gr, bits = nBits}
         local bOk, nToolMask = pcall(Ranger.Advance, _nDt, dom, tCtl, Pressed, Gameplay)
         if bOk and nToolMask and nToolMask ~= 0 then nMask = nMask + nToolMask end
+        -- How long dominant B has been held: from the first tick that saw it down, on the wall clock (adding up
+        -- tick intervals also counted the time before the press: at 2 fps a 0.6 s tap read as a 1.0 s hold, run 112).
         local bHeld = Has(nBits, secondaryDom)
-        Gameplay.nBHeld = bHeld and (Gameplay.nBHeld or 0) + (_nDt or 0) or 0
+        if bHeld then Gameplay.nBDownAt = Gameplay.nBDownAt or (Gameplay.nLastNow or 0) else Gameplay.nBDownAt = nil end
+        Gameplay.nBHeld = bHeld and ((Gameplay.nLastNow or 0) - Gameplay.nBDownAt) or 0
         if Gameplay.nBHeld > 0.8 and not Gameplay.bEscSent then
             -- Leave the First Person View with the game's own pad B (seen in game, run 85: pad B leaves the guest
             -- view), not a synthetic Escape key: the mod sends no OS-level input. A pulse of at least 0.25 s and

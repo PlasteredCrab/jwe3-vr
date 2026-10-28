@@ -138,8 +138,10 @@ Ranger.CallJeep = function(nHand)
 end
 
 -- Pulses on tool change: one per tool index (0 = hands empty: one short tick).
+local tToolNames = {[0] = "empty hands", "dart rifle", "medicine gun", "radio"}
 local AnnounceTool = function(nHand, nTool)
     Bridge.Haptic(nHand, 0.3 + 0.15 * nTool, 0.04 + 0.05 * nTool, 0)
+    Bridge.Text("on foot: " .. (tToolNames[nTool] or global.tostring(nTool)))
 end
 
 -- Called each tick while walking. Returns the pad overrides it needs (mask, rt, clearB).
@@ -151,16 +153,19 @@ Ranger.Advance = function(nDt, nDom, tCtl, fnPressed, Gameplay)
     local nTrigger = nDom == 1 and tCtl.tr or tCtl.tl
     local nGripOff = nDom == 1 and tCtl.gl or tCtl.gr
 
-    -- Short press (released within 0.8 s) cycles the tool; holding it leaves walking (Gameplay).
+    -- Short press (released within 0.8 s) cycles the tool; holding it leaves walking (Gameplay). Timed from the
+    -- first tick that saw it down, on the bridge's wall clock (Gameplay.nLastNow).
     local bHeld = Has(tCtl.bits, secondaryDom)
+    local nNow = (Gameplay and Gameplay.nLastNow) or 0
     if bHeld then
-        Ranger.nHeld = (Ranger.nHeld or 0) + (nDt or 0)
+        Ranger.nDownAt = Ranger.nDownAt or nNow
+        Ranger.nHeld = nNow - Ranger.nDownAt
     else
-        if Ranger.nHeld and Ranger.nHeld > 0 and Ranger.nHeld < 0.8 then
+        if Ranger.nDownAt and (Ranger.nHeld or 0) < 0.8 then
             Ranger.nTool = (Ranger.nTool + 1) % 4
             AnnounceTool(nDom, Ranger.nTool)
         end
-        Ranger.nHeld = 0
+        Ranger.nDownAt, Ranger.nHeld = nil, 0
     end
     if Ranger.nTool == Ranger.Tool.None then
         Bridge.Pointer(nil)
