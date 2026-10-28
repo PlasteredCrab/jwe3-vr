@@ -297,7 +297,10 @@ end
 
 Gameplay.SendTeam = function(bHelicopter)
     local entity, vPos = Gameplay.EntityUnderLaser()
-    if not vPos or not Gameplay.iUIMode then return false end
+    if not vPos or not Gameplay.iUIMode then
+        Bridge.Text("send team: " .. (vPos and "no UI mode interface" or "the laser is not on the ground"))
+        return false
+    end
     local vehicle, sWhy = Vehicles.FindNearestTeam(vPos, bHelicopter)
     if not vehicle then
         Bridge.Haptic(Gameplay.nDominant, 0.2, 0.3, 0) -- long weak buzz: nobody free
@@ -394,8 +397,14 @@ Gameplay.Advance = function(_nDt, _nGameDt)
         Bridge.Pointer(nil)
     elseif nKind == K.Overview then
         bLaser, bGrab = true, true
-        if Pressed(primaryDom) then pcall(Gameplay.TakeControl) end
-        if Pressed(secondaryDom) then pcall(Gameplay.SendTeam, gripOff > 0.6) end
+        if Pressed(primaryDom) then
+            local bOk, sErr = pcall(Gameplay.TakeControl)
+            if not bOk then Bridge.Text("take control failed: " .. tostring(sErr)) end
+        end
+        if Pressed(secondaryDom) then
+            local bOk, sErr = pcall(Gameplay.SendTeam, gripOff > 0.6)
+            if not bOk then Bridge.Text("send team failed: " .. tostring(sErr)) end
+        end
         -- Pointer dot where the laser meets the park.
         local RaycastUtils = require("Helpers.RaycastUtils")
         local bOk, _, vHit = pcall(Ranger.Aim, dom, RaycastUtils.nRayLength or 1000)

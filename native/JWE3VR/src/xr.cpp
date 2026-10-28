@@ -338,13 +338,15 @@ static void PollEvents() {
 //   AIM                  both hands' aim and grip poses at the head (the laser points where the headset looks)
 //   AIM=HUD:u,v          both hands at the head, pointing at point u,v of the in-world HUD panel (0..1, from the
 //                        top left)
+//   AIM=VIEW:u,v         both hands at the head, pointing through point u,v of the rendered view (aim at what a
+//                        screenshot shows)
 //   -                    nothing
 // While it plays it replaces the runtime's controller state; the file is consumed when read. Everything downstream
 // (the Lua controls, the virtual pad, the laser) runs as with real controllers.
 struct VrStep {
     Controls c;
     bool aim = false;
-    bool aimHud = false;
+    bool aimHud = false, aimView = false;
     float hudU = 0.5f, hudV = 0.5f;
     ULONGLONG ms = 0;
 };
@@ -382,6 +384,7 @@ static bool ParseVrStep(const std::string& line, VrStep& s) {
         if (sscanf_s(k.c_str(), "L.SY=%f", &v) == 1) s.c.stickY[0] = v, known = true;
         if (k == "AIM") s.aim = known = true;
         if (sscanf_s(k.c_str(), "AIM=HUD:%f,%f", &s.hudU, &s.hudV) == 2) s.aimHud = known = true;
+        if (sscanf_s(k.c_str(), "AIM=VIEW:%f,%f", &s.hudU, &s.hudV) == 2) s.aimView = known = true;
         if (!known) return false;
     }
     return true;
@@ -431,6 +434,25 @@ static void VrScriptTick(Controls& c, rig::XrSnapshot& snap) {
             snap.aim[h] = snap.grip[h] = snap.head;
             std::lock_guard<std::mutex> l(g_ctrlLock);
             g_rawAim[h] = {snap.rawHead, true};
+        }
+    }
+    if (s.aimView && snap.head.valid) {
+        // Through pixel u,v of the view the game renders (the rig's symmetric FOV, 16:9), from the head.
+        float fovY = 1.f;
+        rig::LastCamera(fovY);
+        float tv = std::tan(fovY * 0.5f), th = tv * (16.f / 9.f);
+        Vec3 local = Normalize({(s.hudU * 2.f - 1.f) * th, (1.f - s.hudV * 2.f) * tv, -1.f});
+        auto through = [&](const Pose& head) {
+            Vec3 back = Rotate(head.q, local) * -1.f;
+            Vec3 right = Normalize(Cross({0, 1, 0}, back));
+            if (Length(right) < 1e-3f) right = {1, 0, 0};
+            return Pose{QuatFromBasis(right, Cross(back, right), back), head.p};
+        };
+        Pose recentred = through(snap.head.pose), raw = through(snap.rawHead);
+        for (int h = 0; h < 2; ++h) {
+            snap.aim[h] = snap.grip[h] = {recentred, true};
+            std::lock_guard<std::mutex> l(g_ctrlLock);
+            g_rawAim[h] = {raw, true};
         }
     }
     Vec3 hc, hr, hu;

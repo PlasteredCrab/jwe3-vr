@@ -1,6 +1,18 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.31  Taking control of a jeep with the laser (runs 119-120, scripted controllers)
+    - New VR script step AIM=VIEW:u,v: the hands point from the head through point u,v of the rendered view, so the
+      laser can be aimed at what a screenshot shows.
+    - Seen working: laser on a ranger jeep parked at the response facility (a few pixels wide in the overview) +
+      dominant A -> "ui mode drive in", the driver's seat. So the hand ray reaches the park where it points and the
+      game's entity pick finds the vehicle. Send team (dominant B on the ground) reached the finder and logged the
+      park's refusal (run 120).
+    - Not explained: in run 119 the same send-team press, made right after leaving the jeep, did nothing at all.
+      The overview's take-control and send-team calls were wrapped in pcall without a log, and send-team returned
+      silently with no ground under the laser; both now log ("take control failed", "send team failed", "send
+      team: the laser is not on the ground").
+
 2026-10-27  0.0.30  The laser on the in-world HUD panel, end to end on scripted input (runs 115-118)
     - New VR script step AIM=HUD:u,v points both hands from the head at a point of the HUD panel (self-check in the
       log: "aimed 0.500,0.215 -> ray hits 1 at 0.500,0.215").

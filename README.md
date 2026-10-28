@@ -282,7 +282,8 @@ The file is written with comments on first run. The ones you are most likely to 
   pad: announced on XInput slot 0" and, in `JWE3VR_shot.req` lines, XInputGetState calls on slot 0.
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
   `JWE3VR_vr.txt` plays VR controller input (buttons, triggers, grips, sticks, `AIM` = the hands point where the
-  headset looks, `AIM=HUD:u,v` = at a point of the in-world HUD panel; format in `xr.cpp`), so the mod's own
+  headset looks, `AIM=HUD:u,v` = at a point of the in-world HUD panel, `AIM=VIEW:u,v` = through a point of the
+  rendered view, to aim at what a screenshot shows; format in `xr.cpp`), so the mod's own
   controller mapping runs with no one wearing the headset;
   `re/remote/vrstep.sh <name> [lines...]` plays one and takes a screenshot.
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), the VR laser's own click path (`LASER=x,y`), `FOCUS`, keys and pad
