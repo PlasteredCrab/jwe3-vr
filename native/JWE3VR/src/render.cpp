@@ -294,14 +294,31 @@ static bool EnsureEyeTextures(const D3D12_RESOURCE_DESC& bb) {
 // copy cannot change format, so each eye's texture is drawn into the acquired image: one fullscreen triangle whose
 // pixel shader loads the source texel (same size) and writes it with alpha 1. Compiled at first use with Windows' own
 // d3dcompiler_47.dll; recorded on the mod's own command list, so none of the game's state is touched.
+// Sharpening (Stereo.Sharpen; first headset test: "make things look more clear"): contrast-adaptive, after AMD's
+// FidelityFX CAS. Each pixel is pushed away from its four neighbours, less where the neighbourhood already has strong
+// contrast, so edges get crisper without ringing or lifting noise in flat areas.
 static const char kConvertHlsl[] =
     "Texture2D<float4> src : register(t0);\n"
+    "cbuffer K : register(b0) { float sharp; };\n"
     "float4 VS(uint id : SV_VertexID) : SV_Position {\n"
     "    float2 uv = float2((id << 1) & 2, id & 2);\n"
     "    return float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);\n"
     "}\n"
+    "float3 Px(int2 p, int2 hi) { return src.Load(int3(clamp(p, int2(0, 0), hi), 0)).rgb; }\n"
     "float4 PS(float4 pos : SV_Position) : SV_Target {\n"
-    "    float3 c = src.Load(int3(pos.xy, 0)).rgb;\n"
+    "    int2 p = int2(pos.xy);\n"
+    "    float3 c = src.Load(int3(p, 0)).rgb;\n"
+    "    if (sharp > 0) {\n"
+    "        uint w, h;\n"
+    "        src.GetDimensions(w, h);\n"
+    "        int2 hi = int2(w, h) - 1;\n"
+    "        float3 n = Px(p + int2(0, -1), hi), s = Px(p + int2(0, 1), hi);\n"
+    "        float3 e = Px(p + int2(1, 0), hi), wv = Px(p + int2(-1, 0), hi);\n"
+    "        float3 mn = min(c, min(min(n, s), min(e, wv))), mx = max(c, max(max(n, s), max(e, wv)));\n"
+    "        float3 amp = sqrt(saturate(min(mn, 1 - mx) / max(mx, 1e-4)));\n"
+    "        float3 k = amp * (-1.0 / lerp(8.0, 5.0, saturate(sharp)));\n"
+    "        c = saturate(((n + s + e + wv) * k + c) / (1 + 4 * k));\n"
+    "    }\n"
     "#ifdef SRGB_TARGET\n"
     "    // The values are already gamma-encoded; an sRGB target encodes again on write, so hand it linear values.\n"
     "    c = c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);\n"
@@ -361,11 +378,14 @@ static bool EnsureConverter(DXGI_FORMAT target) {
         return false;
     }
     D3D12_DESCRIPTOR_RANGE range{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 0, 0, 0};
-    D3D12_ROOT_PARAMETER param{};
-    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    param.DescriptorTable = {1, &range};
-    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
-    D3D12_ROOT_SIGNATURE_DESC rd{1, &param, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
+    D3D12_ROOT_PARAMETER param[2]{};
+    param[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    param[0].DescriptorTable = {1, &range};
+    param[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    param[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    param[1].Constants = {0, 0, 1}; // b0: the sharpening strength
+    param[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    D3D12_ROOT_SIGNATURE_DESC rd{2, param, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_NONE};
     ID3DBlob *sig = nullptr, *err = nullptr;
     if (FAILED(serialize(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err)) ||
         FAILED(g_device->CreateRootSignature(0, sig->GetBufferPointer(), sig->GetBufferSize(), IID_PPV_ARGS(&g_conv.root)))) {
@@ -449,6 +469,7 @@ static bool ConvertInto(int eye, ID3D12Resource* img) {
     D3D12_GPU_DESCRIPTOR_HANDLE srv = g_conv.srvHeap->GetGPUDescriptorHandleForHeapStart();
     srv.ptr += (UINT64)eye * g_conv.srvStep;
     ID3D12Resource* tex = g_eyeTex[eye];
+    float sharp = std::clamp(config::Get().sharpen, 0.f, 1.f);
     return Submit([&](ID3D12GraphicsCommandList* list) {
         D3D12_RESOURCE_BARRIER b = Transition(tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         list->ResourceBarrier(1, &b);
@@ -456,6 +477,7 @@ static bool ConvertInto(int eye, ID3D12Resource* img) {
         list->SetPipelineState(g_conv.pso);
         list->SetDescriptorHeaps(1, &g_conv.srvHeap);
         list->SetGraphicsRootDescriptorTable(0, srv);
+        list->SetGraphicsRoot32BitConstants(1, 1, &sharp, 0);
         list->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         D3D12_VIEWPORT vp{0, 0, (float)id.Width, (float)id.Height, 0, 1};
         D3D12_RECT sc{0, 0, (LONG)id.Width, (LONG)id.Height};
@@ -824,6 +846,23 @@ static ULONGLONG g_autoHudDumpAt = 0;
 static void LogFrameStats(ULONGLONG waitMs) {
     static ULONGLONG windowStart = 0, waitTotal = 0;
     static unsigned frames = 0;
+    // Frame pacing (headset test: "objects far away seem to stutter"): the spread of the time between presents.
+    static LARGE_INTEGER qpf{}, lastPresent{};
+    static double gapMin = 1e9, gapMax = 0, gapSum = 0, gapSq = 0;
+    static unsigned gapN = 0, gapLong = 0;
+    if (!qpf.QuadPart) QueryPerformanceFrequency(&qpf);
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    if (lastPresent.QuadPart) {
+        double gap = (t.QuadPart - lastPresent.QuadPart) * 1000.0 / qpf.QuadPart;
+        gapMin = std::min(gapMin, gap);
+        gapMax = std::max(gapMax, gap);
+        gapSum += gap;
+        gapSq += gap * gap;
+        ++gapN;
+        if (gapN > 1 && gap > 1.5 * (gapSum / gapN)) ++gapLong;
+    }
+    lastPresent = t;
     ULONGLONG now = GetTickCount64();
     if (!windowStart) windowStart = now;
     ++frames;
@@ -831,6 +870,15 @@ static void LogFrameStats(ULONGLONG waitMs) {
     if (now - windowStart >= 10000) {
         LOGI("frames: %.1f fps, OpenXR state %d, xrWaitFrame %.1f ms per frame", frames * 1000.0 / (now - windowStart),
              xr::SessionState(), frames ? (double)waitTotal / frames : 0.0);
+        if (gapN) {
+            double mean = gapSum / gapN, sd = std::sqrt(std::max(0.0, gapSq / gapN - mean * mean));
+            LOGI("pacing: time between presents %.1f ms on average (spread %.1f, shortest %.1f, longest %.1f), %u of %u "
+                 "more than 1.5x the average", mean, sd, gapMin, gapMax, gapLong, gapN);
+        }
+        gapMin = 1e9;
+        gapMax = gapSum = gapSq = 0;
+        gapN = gapLong = 0;
+        LOGI("pairing: %s", rig::PairingSummary().c_str());
         double n = frames ? (double)frames : 1.0;
         LOGI("per frame: OMSetRenderTargets %.1f, BeginRenderPass %.1f, legacy barriers on backbuffer %.1f, enhanced barriers %.1f "
              "(on backbuffer %.1f), copies into backbuffer %.1f",

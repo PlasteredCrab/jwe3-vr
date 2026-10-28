@@ -280,11 +280,20 @@ Camera.ManagerTick = function(nDt, bFromInstance)
     if not bOk or global.type(tWorld) ~= "table" then tWorld = nil end
     local cmm = tWorld and tWorld.CameraModeManager
     if not bFromInstance then Camera.TryWrapInstance(cmm) end
-    -- No camera shake in VR (the gameplay layer turns shakes into haptics instead); once per camera manager.
-    if cmm and cmm.GetConfig and Camera.oShakeOff ~= cmm then
-        Camera.oShakeOff = cmm
+    -- No camera shake in VR (the gameplay layer turns shakes into haptics instead), and no edge panning: the laser is
+    -- the game's mouse, and pointing outside the view puts it on the screen edge, where the game pans the camera
+    -- (first headset test: "moving my controllers without holding anything down makes the camera fly around").
+    -- Every tick, as the settings menu rebuilds the config table.
+    if cmm and cmm.GetConfig then
         local bOkC, tConfig = pcall(cmm.GetConfig, cmm)
-        if bOkC and global.type(tConfig) == "table" then tConfig.bCameraShake = false end
+        if bOkC and global.type(tConfig) == "table" then
+            if tConfig.bEdgePanCircular or tConfig.bEdgePanOrthogonal then
+                Bridge.Text("camera: the game's edge panning turned off for VR")
+            end
+            tConfig.bCameraShake = false
+            tConfig.bEdgePanCircular = false
+            tConfig.bEdgePanOrthogonal = false
+        end
     end
     local sGameMode = nil
     if cmm and cmm.GetCurrentModeName then

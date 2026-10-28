@@ -1,6 +1,54 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.53  A 90 degree view for a sharper centre; frame pacing and tick pairing in the log
+    - The user's VR View recording (E:\Videos6-10-28 12-57-24.mov, 62 s, 60 fps): the HUD panel IS there - the
+      tall thin bar of icons is the game's left toolbar and the small "UNLIMITED ... 100%" strip is the bottom bar,
+      floating on an otherwise clear 1.6 m panel, so they read as objects in the park. Frame-to-frame phase
+      correlation: the park moves smoothly (no back-and-forth jitter), but only every third video frame is new
+      (the frames in between differ by compression noise only), so the recording shows ~20 new pictures a second
+      while the log counted ~37 presents. Whether that is the VR View window's own rate or the game presenting
+      repeats is not known: the 10 s log now has "pacing:" (time between presents: mean, spread, min, max, long
+      gaps) and "pairing:" (game ticks; presents with a new tick's camera / the previous one again / none; ticks
+      skipped).
+    - Stereo.MaxFovDeg (default 90, live): the game's vertical FOV is capped. The Quest 2 needed 106 degrees tall
+      (both eyes plus the cull margin), which with the 16:10 frame made it 130 wide; at 90 the frame is ~116 wide
+      (still the whole width of both eyes) and the centre gets ~10.5 pixels per degree instead of ~8 (+33%); a few
+      degrees at the lens's top and bottom are black. Things also look bigger to the game's LOD choice, which should
+      push LOD drops and detail-object culling further out. The game already culls to its camera frustum, so this
+      is also the tighter culling the user asked about.
+    - Both closures today (12:41, 12:58) were the game hanging and being ended (the user: the last one through Task
+      Manager); WER logged AppHangB1 with LiveKernelEvent 141 / 193 live dumps, but no nvlddmkm or Display event in
+      the System log and no Sophos detection. At 12:58:25 the OpenXR session had gone to SYNCHRONIZED (headset off).
+    - Graphics settings seen in Graphics.config.xml: GeometricQuality High, DetailObjectQuality High,
+      MaxAnisotropicLevel 4 (JWE3.exe's quality names: Low, Medium, High, VeryHigh, Ultra, Maximum). GPU: RTX A4000.
+    - Installed (deploy -NoProxy, game closed); not yet run.
+
+2026-10-28  0.0.52  Mono by default (headset test: the alternating eyes jittered at every pairing)
+    - With the user in the park, AERPresentLag was switched live from 1 to 2 ("same or worse") and to 0 (no better).
+      The park runs at ~40 fps there (37-45 in the 10 s lines; xrWaitFrame under 1 ms, so the game is the limit), so
+      each eye of the alternating pair gets only ~20 images a second and the two are always 25 ms apart. The user
+      asked for what the two-grip zoom does all the time; Mode = mono was set live at 12:53:31 (both eyes the same
+      image, the head's pose; no stereo depth) and the user: "that looks and feels way better". Mono is now the
+      default in the code and the written ini; aer stays as an option.
+    - 0.0.51's cursor hooks, first run: on the main menu the game never called GetCursorPos or GetMessagePos and took
+      no mouse messages through PeekMessageW / GetMessageW with our pt (counts 0, apart from "message pt set" while
+      posting), so the front end reads the cursor some other way; menu clicks are still open. In the park the game
+      calls GetCursorPos ~75 times a second and every call got the laser point (732 of 732 in one 10 s line).
+    - The HUD panel (1.3-1.4 m, 20-47 deg from where the user looked, 22-33 cm below the eyes) still not reported seen.
+    - "Sometimes moving my controllers without holding anything down makes the camera fly around": the game's edge
+      panning (CameraLogic.AdvanceEdgePanCircular: the mouse within 1% of the screen edge pans the camera). Since
+      0.0.51 the game's GetCursorPos answers with the laser's point, and the laser pointed outside the view sits on the
+      edge. The VR camera code now sets the camera manager config's bEdgePanCircular / bEdgePanOrthogonal false every
+      tick (with the camera shake; the settings menu rebuilds the table). Not yet run.
+    - Clarity (user: "anything else we can do to make things look more clear"): the eye conversion pass now sharpens,
+      contrast-adaptive after AMD's CAS (Stereo.Sharpen, 0.5 default, live). Shader checked with fxc; not yet run.
+      Why it looks soft: one 1920x1200 frame covers 130 x 106 degrees (the head-centred union of both eyes plus the
+      3 degree cull margin), about 8 pixels per degree at the centre against the Quest 2's ~20; a third of the width is
+      outside the view. With mono both eyes share one camera, so temporal AA (TAA, DLSS / DLAA) works again and is
+      the next thing to try in the game's menu. The eye swapchains follow the game's frame size, so a bigger frame
+      (NVIDIA DSR) would pass straight through.
+
 2026-10-28  0.0.51  Menu clicks: the game asks Windows where the cursor is; the left eye's jitter is the pairing
     - 0.0.50's pad A acted on the game's own pad selection (CONTINUE by default), not the laser's item (user: aiming at
       WORKSHOP opened CONTINUE). Removed. The earlier "A opened LOAD GAME" was the pad selection already being there.

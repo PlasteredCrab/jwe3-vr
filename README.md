@@ -33,8 +33,10 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Head tracking in every camera mode: your headset is the game camera (6DoF), with no pitch or roll forced on
   you, snap or smooth turn, recentre, seated and standing play. Covers JWE3's new modes too: the Freelook park
   camera and the sandbox map generator as the park model, the nest-exit cinematic on the flat screen.
-- Stereo 3D by alternate-eye rendering (one eye per frame), plus an experimental mode that renders both eyes every
-  frame by replaying the frame.
+- Mono by default: both eyes get the same image every frame, which looked smooth and right in the first headset
+  test. Stereo 3D by alternate-eye rendering (one eye per frame, `Stereo.Mode = aer`) is there too, but at the game's
+  ~40 fps each eye only gets ~20 images a second and the eyes jittered against each other; plus an experimental mode
+  that renders both eyes every frame by replaying the frame.
 - True world scale in metres: walking and vehicles are 1:1, the park overview is a 1:30 model you can grab,
   scale and rotate.
 - The main menu, loading screens and cutscenes on a large flat screen in front of you; in a park the pause menu
@@ -230,9 +232,10 @@ haptics, and anything about how it looks or feels in the headset (two-hand scale
 2. **Park, head tracking:** load the Sandbox park. You look down on the park as a 1:30 model. Turning and leaning
    move the view one to one, with no lag or swimming and the horizon level. Log: "camera: driven from the camera
    manager's own Advance" and "camera tick: mode Standard, VR override 1.0".
-3. **Stereo depth:** close one eye, then the other: the two views must differ, and near things must look near. If
-   the depth looks inside-out, doubled or a frame late, try `AERPresentLag` 0, 1 or 2, or flip `SwapEyes` (the ini
-   reloads live).
+3. **Stereo depth (only with `Stereo.Mode = aer`; the default is mono):** close one eye, then the other: the two
+   views must differ, and near things must look near. If the depth looks inside-out, doubled or a frame late, try
+   `AERPresentLag` 0, 1 or 2, or flip `SwapEyes` (the ini reloads live). First headset test: at lags 1, 2 and 0 the
+   left eye jittered against the right; mono looked right.
 4. **In-world HUD:** the game's toolbar and bottom bar float on a panel a little below eye level and follow when
    you turn away; nothing of the UI is painted flat on the eyes. Log: "the game draws its UI into texture",
    "the UI now goes to the panel", "in-world HUD active".
@@ -279,7 +282,9 @@ The file is written with comments on first run. The ones you are most likely to 
 
 | Setting | What it does |
 | --- | --- |
-| `Stereo.Mode` | `aer` (default), `sync` (experimental, both eyes every frame), `mono` |
+| `Stereo.Mode` | `mono` (default, same image in both eyes), `aer` (stereo, alternate eye per frame), `sync` (experimental, both eyes every frame) |
+| `Stereo.Sharpen` | Sharpening of the eye images, 0 off to 1 strongest (0.5 default; contrast-adaptive, live) |
+| `Stereo.MaxFovDeg` | Tallest view the game renders (90 default, 0 = the whole lens): sharper centre and later LOD drops, a few black degrees at the lens's top and bottom (live) |
 | `Stereo.AERPresentLag`, `Stereo.SwapEyes` | Pair game frames with eyes if the 3D looks wrong |
 | `Rig.OverviewScale` | Size of the park model (30 = 1:30) |
 | `Rig.Seated`, `Rig.SnapTurnDeg` | Seated play; snap-turn angle (0 = smooth) |

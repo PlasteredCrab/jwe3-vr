@@ -303,6 +303,10 @@ TickOutput Tick(const TickInput& in) {
     GameCamera cam = Place(origin, basis, scale, rel);
 
     float fovY = EnclosingFovY(g_snap.fov, 2, g_aspect, cfg.cullMarginDeg * kPi / 180.f);
+    // Stereo.MaxFovDeg: one 1920x1200 frame stretched over the whole lens (106 degrees tall, 130 wide on a Quest 2)
+    // gives ~8 pixels per degree in the middle. Capping the height trades a few blurry degrees at the lens's top
+    // and bottom for a sharper centre, and things look bigger to the game's LOD choice (less pop-in).
+    if (cfg.maxFovDeg > 0.f) fovY = std::min(fovY, cfg.maxFovDeg * kPi / 180.f);
     if (!Finite(cam.pos) || !Finite(cam.basis.f) || !std::isfinite(fovY)) {
         JVR_LOG_ONCE("rig: non-finite camera, skipping override");
         return out;
@@ -340,21 +344,45 @@ TickOutput Tick(const TickInput& in) {
     return out;
 }
 
+// Pairing counters for the 10 s log (render thread writes, under g_lock).
+static unsigned g_pairFresh = 0, g_pairReused = 0, g_pairDropped = 0, g_pairNone = 0;
+static uint64_t g_pairTickAt = 0;
+
 bool TakeRequestForPresent(RenderRequest& out) {
     std::lock_guard<std::mutex> l(g_lock);
     int lag = config::Get().aerPresentLag;
     // After a burst of ticks between two presents, drop the stale ones so the queue length returns to
     // the configured lag; otherwise every later frame would be paired with a request one tick too old.
-    while ((int)g_requests.size() > lag + 1) g_requests.pop_front();
+    while ((int)g_requests.size() > lag + 1) {
+        g_requests.pop_front();
+        ++g_pairDropped;
+    }
     if ((int)g_requests.size() > lag) {
         g_lastRequest = g_requests.front();
         g_requests.pop_front();
         out = g_lastRequest;
+        ++g_pairFresh;
         return true;
     }
-    if (g_lastRequest.tick == 0 || std::chrono::steady_clock::now() - g_lastPushTime > kRequestStale) return false;
+    if (g_lastRequest.tick == 0 || std::chrono::steady_clock::now() - g_lastPushTime > kRequestStale) {
+        ++g_pairNone;
+        return false;
+    }
     out = g_lastRequest;
+    ++g_pairReused;
     return true;
+}
+
+std::string PairingSummary() {
+    std::lock_guard<std::mutex> l(g_lock);
+    char b[256];
+    snprintf(b, sizeof(b),
+             "%llu game ticks; presents with a new tick's camera %u, with the last one again (no tick since) %u, none %u; "
+             "ticks skipped %u",
+             (unsigned long long)(g_tick - g_pairTickAt), g_pairFresh, g_pairReused, g_pairNone, g_pairDropped);
+    g_pairFresh = g_pairReused = g_pairDropped = g_pairNone = 0;
+    g_pairTickAt = g_tick;
+    return b;
 }
 
 int UpcomingEye() {

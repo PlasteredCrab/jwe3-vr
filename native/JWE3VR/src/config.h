@@ -15,10 +15,12 @@ struct Settings {
     bool enabled = true;
 
     // [Stereo]
-    StereoMode stereo = StereoMode::AER;
+    StereoMode stereo = StereoMode::Mono; // AER jittered in the first headset test (see JWE3VR.ini)
     int aerPresentLag = 1;        // ticks between Lua setting an eye camera and that frame reaching Present
     bool swapEyes = false;        // flip if AER pairing is one frame off (the world looks inside-out)
     float cullMarginDeg = 3.0f;   // extra culling FOV so late head motion never shows popped-out edges
+    float sharpen = 0.5f;         // eye image sharpening, 0 off .. 1 strongest (contrast-adaptive)
+    float maxFovDeg = 90.f;       // cap on the rendered vertical FOV (0 = cover the whole lens)
     bool syncDiscovery = true;    // look for the view constant buffer and log what was found
     bool syncCaptureRT = true;    // sync: backbuffer state after the replayed submission (true RENDER_TARGET, false PRESENT)
     bool forceVsyncOff = true;    // present with sync interval 0 while the headset paces the game

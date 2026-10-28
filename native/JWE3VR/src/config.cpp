@@ -19,15 +19,24 @@ Enabled = 1
 
 [Stereo]
 ; Mode: mono | aer | sync
-;   aer  = alternate eye per frame (default, robust)
+;   mono = both eyes get the same image every frame (default: smooth, no stereo depth; the first headset test
+;          found the alternating eyes jittery at the game's ~40 fps, and this the one that looked right)
+;   aer  = alternate eye per frame (stereo depth, but each eye only gets every other frame)
 ;   sync = both eyes every frame by replaying the frame (experimental; needs the view CB to be found)
-Mode = aer
+Mode = mono
 ; Frames between the Lua camera update and that frame being presented. If the world looks wrong
 ; in stereo (eyes swapped or one frame apart), try 0, 1 or 2, or flip SwapEyes.
 AERPresentLag = 1
 SwapEyes = 0
 ; Extra degrees added to the game's culling FOV so fast head turns never reveal culled edges.
 CullMarginDeg = 3
+; Sharpening of the eye images, 0 (off) to 1 (strongest); contrast-adaptive, so flat areas stay clean.
+Sharpen = 0.5
+; Tallest view the game renders, in degrees (0: the whole lens). The game's one frame is spread over this, so a
+; smaller view is sharper and looks bigger to the game's level-of-detail choice; past it the lens edge is black.
+; 90 keeps the full width of a Quest 2 (the 16:10 frame is then ~116 degrees wide) and loses a few degrees at the
+; top and bottom.
+MaxFovDeg = 90
 ; Park overview: while you move the park (grab, fly, stick), both eyes get the same image, so the alternating eyes
 ; never disagree about where the park is; stereo comes back when you stop. 0 keeps stereo all the time.
 MonoWhileMoving = 1
@@ -141,11 +150,13 @@ void Load() {
     Settings s;
     s.enabled = Bool(L"General", L"Enabled", s.enabled);
 
-    std::string mode = Str(L"Stereo", L"Mode", "aer");
+    std::string mode = Str(L"Stereo", L"Mode", "mono");
     s.stereo = mode == "mono" ? StereoMode::Mono : mode == "sync" ? StereoMode::Sync : StereoMode::AER;
     s.aerPresentLag = (int)Num(L"Stereo", L"AERPresentLag", (float)s.aerPresentLag);
     s.swapEyes = Bool(L"Stereo", L"SwapEyes", s.swapEyes);
     s.cullMarginDeg = Num(L"Stereo", L"CullMarginDeg", s.cullMarginDeg);
+    s.sharpen = Num(L"Stereo", L"Sharpen", s.sharpen);
+    s.maxFovDeg = Num(L"Stereo", L"MaxFovDeg", s.maxFovDeg);
     s.monoWhileMoving = Num(L"Stereo", L"MonoWhileMoving", s.monoWhileMoving ? 1.f : 0.f) != 0.f;
     s.syncDiscovery = Bool(L"Stereo", L"SyncDiscovery", s.syncDiscovery);
     s.syncCaptureRT = Str(L"Stereo", L"SyncCaptureState", "rt") != "present";

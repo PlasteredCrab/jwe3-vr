@@ -8,6 +8,7 @@
 #include "vrmath.h"
 
 #include <cstdint>
+#include <string>
 
 namespace jvr::rig {
 
@@ -77,6 +78,8 @@ bool TakeRequestForPresent(RenderRequest& out);
 // Any thread: the eye (0/1) of the request the next Present will take, i.e. the eye of the frame being
 // recorded now, with the same pairing the user calibrated with AERPresentLag. -1 if unknown.
 int UpcomingEye();
+// Render thread, for the 10 s log: how presents were paired with game ticks since the last call (resets).
+std::string PairingSummary();
 
 // Game-space ray of a hand's aim pose using the last anchor. Returns false if not tracked.
 bool HandRay(int hand, vm::Vec3& origin, vm::Basis& basis);
