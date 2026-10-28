@@ -1,6 +1,42 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.39  Sandbox park finished remotely; on-foot darts, medicine, radio and the aviary drone (runs 138-141)
+    - Paths: the last stretch (loop corner east, then south into the Arrival Point's north entrance) joined the
+      network: the path report now gives the response facility and Arrival Point 1 "paths connected true,
+      operational true", the red warnings are gone, and the facility's panel lists Ranger Teams 1-2 and a Capture
+      Team. Then built remotely and kept by the autosaves: a hatchery (path to the loop, operational), a security
+      2 fence around its pen (closed onto the pen's attach points), six Archaeornithomimus synthesised, incubated
+      and released (comfort and health 100%); an aviary dome with an aviary hatchery on its rim (path, Ranger Team 1
+      and Mobile Vet Unit 1 assigned) and six Dimorphodon released; a paleo-medical facility (operational, MVU 1).
+    - Team orders now open: dominant B on the ground in the overview opened the game's ADD TASK screen (before
+      the facility was operational: "no ranger team can take orders").
+    - Walking, scripted VR controllers, the new debug aim (JWE3VR_drive.req "aimdino": the hand's ray goes to the
+      nearest dinosaur, because a script cannot follow a moving animal at 2-3 fps):
+      * dart rifle: 3 hits on dinosaur 18816 -> Tranquillise; its panel then read TRANQUILIZED, 9:08 left.
+        IsConscious still read true right after the call (the game applies it on a later tick). The 3 is the
+        mod's default: JWE3's Lua has no tranquilliser dart estimate (only GetApproxNumDartsToTreat).
+      * medicine gun: JWE3VR_drive.req "sick" (new) gives the nearest dinosaur a disease through the game's
+        IDiseaseManager:AddDiseaseToDino - roundworm, shown by the game as "Hookworms on site"; one medicine dart
+        (the game's estimate) -> RemoveDisease -> not diseased. On a healthy one: "nothing to treat". The first
+        version picked algae poisoning, an unmet-needs disease the game cures through the habitat (its help
+        screen said so); "sick" now prefers diseases the game treats with darts.
+      * radio: A called jeep 18367 (the game's ranger panel listed a manual Fire Flare task); the trigger on a
+        dinosaur left walking into the ADD TASK screen for Ranger Team 1 (a help screen about the new disease came
+        up on top first).
+      * Darts stop at fences: from outside the fence every dart hit the fence. Foliage is no longer in the shot's
+        raycast flags (grass should not stop a dart; not shown to have mattered). Taps under ~0.5 s are still
+        missed at 2-3 fps; 0.6 s taps and trigger pulls all registered.
+    - Aviary drone (PILOT DRONE in the aviary hatchery): the mod drives it as a vehicle (first-person camera, rig
+      kind 3); the left stick flew it. Off-hand Y entered its aim mode (gunner UI mode, gun at the camera) only
+      once it was airborne - on the ground nothing happens, as with the helicopter. Off-hand stick right picked
+      TRANQUILLIZE, the trigger fired (the game's own shot message), and the new projectile-impact log showed each
+      dart land - all four on the ground (17943): at 2-3 fps the closed-loop aim takes 3-4 s and the Dimorphodon
+      had moved. No drone dart was seen on a dinosaur.
+    - New logs: every shot ("shot N"), every projectile impact (what was hit; a dinosaur's conscious / diseased
+      state), on-foot hits and misses with the dart count and where it came from.
+    - Not seen: any of this in a worn headset; with real controllers the darts follow your hand, not the debug aim.
+
 2026-10-28  0.0.38  Sandbox path work with the game's own path data (runs 135-136)
     - The path report (JWE3VR_drive.req "paths") now finds each building's "Path_Junction" child and reports, from
       the game's own data, its world position, its screen position (world transforms - the camera is parented, so

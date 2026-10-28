@@ -15,9 +15,14 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 > own model hidden), and the
 > virtual Xbox pad reaches the game (a scripted pad drove the jeep, lifted the helicopter off and entered both gun seats).
 > The guest view (walking) puts the rig on the frame too, and a scripted stick walked it; photo mode works from
-> the jeep, the pause menu lands on the HUD panel, and leaving a park and loading it again works. Not yet seen: head motion
-> and stereo depth in a worn headset, the HUD panel itself in the headset, the VR controllers (so neither
-> head-yaw steering nor the on-foot tools), and
+> the jeep, the pause menu lands on the HUD panel, and leaving a park and loading it again works. With scripted VR
+> controllers in a Sandbox park built remotely (paths, response facility, hatchery, enclosure, aviary): the on-foot
+> dart rifle tranquillised a dinosaur (the game's panel: TRANQUILIZED) and the medicine gun cured one, the radio
+> called a jeep (a Fire Flare task in the game's list) and opened the team order screen, and the aviary drone flew,
+> entered its aim mode and fired. Not yet seen: head motion
+> and stereo depth in a worn headset, the HUD panel itself in the headset, real VR controllers in your hands (the
+> runs above used scripted ones, and the on-foot darts were aimed at the dinosaur by a debug aid), a drone dart
+> landing on a dinosaur, and
 > per-eye TAA and sync stereo (both need the game's view constant buffer, which the Sophos-safe install without
 > version.dll cannot reach). Features below describe what the code does; see
 > `STATUS.txt` for what each run showed.
@@ -64,10 +69,14 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 - Photo mode from the jeep: click the stick, and A takes the photo (the capture helicopter has no photo mode).
 - Staff orders: point at a vehicle to take control of it, or at a dinosaur or building to send the nearest
   ranger team or ACU helicopter into the game's own order screen.
-- On-foot ranger: while walking, carry a dart rifle, a medicine gun or a radio. Darts count toward the game's
-  own estimate for that dinosaur, then it goes down, or its disease is cured. There is no visible gun or dart
-  yet; a dot shows where you aim and haptics confirm hits. The radio sends teams, takes over vehicles, and calls
-  the nearest free jeep to where you stand.
+- On-foot ranger: while walking, carry a dart rifle, a medicine gun or a radio. Medicine darts count toward the
+  game's own estimate for treating that dinosaur, then its disease is cured; three tranquilliser darts put it
+  down (the game has no dart estimate for that). Darts fly through grass and bushes but stop at fences. There is
+  no visible gun or dart yet; a dot shows where you aim and haptics confirm hits. The radio sends teams, takes
+  over vehicles, and calls the nearest free jeep to where you stand.
+- Aviary drone (PILOT DRONE in the aviary hatchery's panel): you fly it from its own camera with the vehicle
+  controls; once it is airborne, off-hand Y enters its aim mode, where its equipment (scanner, medicine,
+  tranquilliser, stimulant, deep analyser) follows your hand and the trigger uses it, as in the gun seats.
 - Left-handed mode, and every setting in one ini file that reloads live.
 
 **Install and safety**
@@ -114,6 +123,7 @@ Design guide: https://claude.ai/artifact/4X3NR1K6W3fxGVFGwkptwz
 | Jeep / helicopter seat | Both grips, turn your hands | Steering wheel |
 | Jeep / helicopter seat | Head | Look around |
 | Jeep / helicopter seat | Off-hand Y | The game's Aim Mode: into the gun seat (pad Y in JWE3; the helicopter only once it is in the air) |
+| Aviary drone | Left stick, off-hand Y | Fly; once airborne, Aim Mode (then as the gun seat: hand aims, trigger uses the equipment, off-hand stick left / right picks it) |
 | Jeep / helicopter seat, gun seat | Dominant B | The game's Back (pad B): gun seat to driver's seat, then out of the vehicle |
 | Jeep / helicopter seat | Off-hand grip alone | Site map (pad LB); not while both grips hold the wheel |
 | Jeep seat | Dominant stick click | Photo mode (the game's pad d-pad right; the capture helicopter has no photo mode) |
@@ -306,7 +316,10 @@ The file is written with comments on first run. The ones you are most likely to 
   `JWE3VR_aer.req` saves the next 8 frames as `JWE3VR_aer<n>_eye<e>.bmp` with the eye each is shown to (with a large
   `IPDScale` the eyes' frames differ visibly: a frame for the left eye shows the scene shifted right).
   `JWE3VR_drive.req` ("jeep" or "heli") takes control of the team vehicle nearest the camera, found as the radio
-  finds one; `re/remote/drive.sh <name> jeep|heli` uses it to reach a seat with no clicks.
+  finds one; `re/remote/drive.sh <name> jeep|heli` uses it to reach a seat with no clicks. The same file with
+  "paths" logs each building's path connections and path join, "aimdino" turns the on-foot tools' aim at the nearest
+  dinosaur on or off (scripted hands cannot follow an animal), and "sick" gives the nearest dinosaur a disease
+  (one the game treats with darts) for the medicine gun. Shots and projectile impacts are logged.
 - **HUD stays flat in both eyes / no panel:** look for "the game draws its UI into texture", "the UI now goes to the
   panel" and "in-world HUD active" in the log. If the texture is never found (a game update), use `JWE3VR_rt.req`
   to see which render target holds the UI; until then the tablet shows the HUD.

@@ -62,6 +62,8 @@ Gameplay.Init = function(_tEnvironment)
     if _tEnvironment then
         local bOk, iUIMode = pcall(function() return _tEnvironment:RequireInterface("Editors.Shared.IUIMode") end)
         if bOk then Gameplay.iUIMode = iUIMode end
+        local bOk2, iDisease = pcall(function() return _tEnvironment:RequireInterface("Interfaces.IDiseaseManager") end)
+        if bOk2 then Gameplay.iDiseaseManager = iDisease end
     end
     Gameplay.PatchMouseRay()
 end
@@ -253,9 +255,25 @@ end
 
 Gameplay.OnWeaponFired = function()
     Bridge.Haptic(Gameplay.nDominant, 0.9, 0.08, 0)
-    if not Gameplay.bFireLogged then
-        Gameplay.bFireLogged = true
-        Bridge.Text("gun seat: weapon fired (haptic kick)")
+    Gameplay.nShots = (Gameplay.nShots or 0) + 1
+    Bridge.Text("gun seat: weapon fired (haptic kick), shot " .. Gameplay.nShots)
+end
+
+-- Where the darts and flares land (any gun: jeep, helicopter, drone), for remote tests: what was hit and whether
+-- it is a dinosaur, and the dinosaur's state afterwards.
+Gameplay.OnProjectileImpact = function(tMessages)
+    local dinos = api.world.GetWorldAPIs().dinosaurs
+    for _, tMessage in global.ipairs(tMessages or {}) do
+        local hit = tMessage.nHitEntity
+        local bOk, bDead = pcall(dinos.IsDead, dinos, hit)
+        local sWhat = (bOk and bDead == false) and "dinosaur" or "not a dinosaur"
+        local sState = ""
+        if sWhat == "dinosaur" then
+            local bC, bAwake = pcall(dinos.IsConscious, dinos, hit)
+            local bS, bSick = pcall(dinos.IsDiseased, dinos, hit)
+            sState = ", conscious " .. tostring(bC and bAwake) .. ", diseased " .. tostring(bS and bSick)
+        end
+        Bridge.Text("projectile type " .. tostring(tMessage.eProjectileType) .. " hit " .. tostring(hit) .. " (" .. sWhat .. sState .. ")")
     end
 end
 
@@ -294,6 +312,54 @@ Gameplay.DebugDrive = function(bHelicopter)
     if not vehicle or not Gameplay.iUIMode then return false end
     Gameplay.iUIMode:OnModeEvent("RequestChangeUI", "DriveVehicle", {Vehicle = vehicle, DeleteVehicleWhenDone = false})
     return true
+end
+
+-- Debug (JWE3VR_drive.req "aimdino" / "sick"): "aimdino" switches the on-foot tools' aim to the nearest dinosaur
+-- and back (scripted controllers cannot follow a moving animal at the remote 2-3 fps); "sick" gives the nearest
+-- dinosaur a disease through the game's disease manager, for the medicine gun. Both log the dinosaur.
+Gameplay.DebugDinosaur = function(bSick)
+    local cam = api.transform.CalculateWorldTransform(api.camera.GetMainCameraID())
+    local cp = cam:GetPos()
+    local dino, _, nDist = Ranger.NearestDinosaur(Vector3:new(cp:GetX(), cp:GetY(), cp:GetZ()))
+    local sDino = "nearest dinosaur " .. tostring(dino) .. (dino and global.string.format(" at %.1f m", nDist) or "")
+    if not bSick then
+        Ranger.bAimDino = not Ranger.bAimDino
+        Bridge.Text("debug: on-foot aim at the nearest dinosaur " .. (Ranger.bAimDino and "on" or "off") .. "; " .. sDino)
+        return
+    end
+    if not dino or not Gameplay.iDiseaseManager then
+        Bridge.Text("debug sick: " .. sDino .. ", disease manager " .. tostring(Gameplay.iDiseaseManager))
+        return
+    end
+    -- AddDiseaseToDino(id, dino, bIgnoreResistance, sCause) returns false for a disease this island does not
+    -- configure, one already vaccinated against, or a dinosaur it cannot infect: try the island's own diseases,
+    -- first those the game treats with medicine darts (it has a "<name>Dart" for them; run 140: the first one
+    -- alphabetically, algae poisoning, is an unmet-needs disease that the game cures through the habitat).
+    local iDisease = Gameplay.iDiseaseManager
+    local tDart = {"DDT_Roundworm", "DDT_EColi", "DDT_Cryptosporidiosis", "DDT_Coccidioidomycosis", "DDT_Rabies",
+                   "DDT_InfectedWound", "DDT_IvyPoisoning", "DDT_AvianPox"}
+    local tIDs, tSeen = {}, {}
+    local tConfig = global.type(iDisease.tDiseaseConfig) == "table" and iDisease.tDiseaseConfig or nil
+    for _, sID in global.ipairs(tDart) do
+        if not tConfig or tConfig[sID] then tIDs[#tIDs + 1], tSeen[sID] = sID, true end
+    end
+    if tConfig then
+        local tRest = {}
+        for sID in global.pairs(tConfig) do if not tSeen[sID] then tRest[#tRest + 1] = sID end end
+        global.table.sort(tRest)
+        for _, sID in global.ipairs(tRest) do tIDs[#tIDs + 1] = sID end
+    end
+    local dinos = api.world.GetWorldAPIs().dinosaurs
+    local sResult = "no disease could be added (tried " .. #tIDs .. ")"
+    for _, sID in global.ipairs(tIDs) do
+        local bOk, bAdded = pcall(iDisease.AddDiseaseToDino, iDisease, sID, dino, true, "JWE3VR")
+        if bOk and bAdded then
+            sResult = "added " .. sID
+            break
+        end
+    end
+    local bOk2, bSickNow = pcall(dinos.IsDiseased, dinos, dino)
+    Bridge.Text("debug sick: " .. sDino .. ", " .. sResult .. ", diseased " .. tostring(bOk2 and bSickNow))
 end
 
 -- Debug (JWE3VR_drive.req "paths"): for the response facility (the spawn point of the nearest ranger jeep, and its
@@ -424,6 +490,9 @@ Gameplay.Advance = function(_nDt, _nGameDt)
     elseif nDebug == 3 then
         local bOk, sErr = pcall(Gameplay.DebugPaths)
         if not bOk then Bridge.Text("debug paths failed: " .. tostring(sErr)) end
+    elseif nDebug == 4 or nDebug == 5 then
+        local bOk, sErr = pcall(Gameplay.DebugDinosaur, nDebug == 5)
+        if not bOk then Bridge.Text("debug dinosaur failed: " .. tostring(sErr)) end
     end
     local tl, tr, gl, gr, sxl, syl, sxr, syr, nBits, nNow = Bridge.Controls()
     -- Hold and pulse timers run on the wall clock: the game's time step is clamped to 1/15 s on slow frames and

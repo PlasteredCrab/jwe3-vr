@@ -60,6 +60,11 @@ JWE3VRManager.Init = function(self, _tProperties, _tEnvironment)
         messaging.RegisterReceiver(messaging.MsgType_WeaponFiredMessage, fn)
         self.tReceivers[messaging.MsgType_WeaponFiredMessage] = fn
     end
+    if messaging and messaging.MsgType_ProjectileImpactMessage then
+        local fn = function(tMessages) pcall(Gameplay.OnProjectileImpact, tMessages) end
+        messaging.RegisterReceiver(messaging.MsgType_ProjectileImpactMessage, fn)
+        self.tReceivers[messaging.MsgType_ProjectileImpactMessage] = fn
+    end
 end
 
 JWE3VRManager.Advance = function(self, _nDeltaTime, _nUnscaledDeltaTime)

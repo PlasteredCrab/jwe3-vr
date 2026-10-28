@@ -606,7 +606,8 @@ static void OnPresent(IDXGISwapChain* sc) {
         }
         // JWE3VR_drive.req ("jeep" or "heli"): the Lua side takes control of the nearest ranger jeep / ACU
         // helicopter, as the radio and staff wand pick one (remote tests reach the seats without finding the
-        // response facility on screen).
+        // response facility on screen). "paths": path-connection report; "aimdino": on-foot aim at the nearest
+        // dinosaur on/off; "sick": the nearest dinosaur gets a disease (medicine gun tests).
         std::wstring driveReq = ModuleDir() + L"JWE3VR_drive.req";
         if (GetFileAttributesW(driveReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
             char text[16]{};
@@ -616,9 +617,14 @@ static void OnPresent(IDXGISwapChain* sc) {
                 fclose(f);
             }
             DeleteFileW(driveReq.c_str());
-            int command = strncmp(text, "heli", 4) == 0 ? 2 : strncmp(text, "paths", 5) == 0 ? 3 : 1;
+            int command = strncmp(text, "heli", 4) == 0      ? 2
+                          : strncmp(text, "paths", 5) == 0   ? 3
+                          : strncmp(text, "aimdino", 7) == 0 ? 4
+                          : strncmp(text, "sick", 4) == 0    ? 5
+                                                             : 1;
             g_debugCommand = command;
-            LOGI("debug: request (%s) passed to Lua", command == 3 ? "path report" : command == 2 ? "helicopter" : "jeep");
+            static const char* const kNames[] = {"", "jeep", "helicopter", "path report", "aim at dinosaur", "sick dinosaur"};
+            LOGI("debug: request (%s) passed to Lua", kNames[command]);
         }
         // JWE3VR_rt.req: log the render targets of a frame and save each large one (finding the UI target).
         std::wstring rtReq = ModuleDir() + L"JWE3VR_rt.req";

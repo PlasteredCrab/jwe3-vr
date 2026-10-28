@@ -30,14 +30,65 @@ local kShotInterval = 1.2 -- seconds between darts (reload)
 local WorldAPIs = function() return api.world.GetWorldAPIs() end
 local Has = function(bits, flag) return (math.floor((bits or 0) / flag) % 2) == 1 end
 
--- Hand ray and what it hits: entity, hit point (both may be nil).
+-- What a dart (and the hand's pointer) can hit: the game's "everything" set without foliage (grass and bushes
+-- should not stop a dart) and the invisible camera-obstacle and scenery-selection volumes. Fences do stop it.
+Ranger.ShotFlags = function()
+    if Ranger.nShotFlags then return Ranger.nShotFlags end
+    local P = api.physics
+    local n = 0
+    for _, sFlag in global.ipairs({"Flag_Landscape", "Flag_Water", "Flag_Prop", "Flag_PhysicsDisabledProp", "Flag_Gate",
+                                   "Flag_Building", "Flag_Wall", "Flag_Fence", "Flag_Track", "Flag_Pylon", "Flag_Vehicle",
+                                   "Flag_Dinosaur", "Flag_Guest", "Flag_LagoonFloor"}) do
+        local i = global.type(P[sFlag]) == "number" and math.tointeger(P[sFlag]) or nil
+        if i then n = n | i end
+    end
+    Ranger.nShotFlags = n ~= 0 and n or require("Helpers.RaycastUtils").nEverythingFlags
+    return Ranger.nShotFlags
+end
+
+-- The nearest living dinosaur to vFrom and its world position (debug aim; nil when there is none).
+Ranger.NearestDinosaur = function(vFrom)
+    local dinos = WorldAPIs().dinosaurs
+    local bOk, tDinos = pcall(dinos.GetDinosaurs, dinos, true)
+    if not bOk or global.type(tDinos) ~= "table" then return nil end
+    local best, vBest, nBest = nil, nil, math.huge
+    for _, e in pairs(tDinos) do
+        local bP, v = pcall(api.transform.CalculateWorldPosition, e)
+        if bP and v then
+            local vPos = Vector3:new(v:GetX(), v:GetY(), v:GetZ())
+            local d = (vPos - vFrom):Length()
+            if d < nBest then best, vBest, nBest = e, vPos, d end
+        end
+    end
+    return best, vBest, nBest
+end
+
+-- Hand ray and what it hits: entity, hit point (both may be nil). With Ranger.bAimDino (remote tests:
+-- JWE3VR_drive.req "aimdino") the ray from the hand goes to the nearest dinosaur, at the first of a few heights
+-- above its origin whose ray reaches it (a tranquillised dinosaur lies below the 1 m a standing one is hit at).
 Ranger.Aim = function(nHand, nRange)
     local bValid, ox, oy, oz, fx, fy, fz = Bridge.Hand(nHand)
     if bValid ~= 1 then return nil end
     local vStart, vDir = Vector3:new(ox, oy, oz), Vector3:new(fx, fy, fz)
-    local RaycastUtils = require("Helpers.RaycastUtils")
     local physicsWorld = api.entity.FindEntityByName("MainPhysicsWorld")
-    local tResults = api.physics.RayCast(physicsWorld, vStart, vStart + vDir * (nRange or kRange), RaycastUtils.nEverythingFlags, 1)
+    local Cast = function(v)
+        return api.physics.RayCast(physicsWorld, vStart, vStart + v * (nRange or kRange), Ranger.ShotFlags(), 1)
+    end
+    if Ranger.bAimDino then
+        local dino, vDino = Ranger.NearestDinosaur(vStart)
+        if vDino then
+            for _, nUp in global.ipairs({1.0, 0.6, 0.3, 1.5}) do
+                local v = (vDino + Vector3:new(0, nUp, 0) - vStart):Normalised()
+                local t = Cast(v)
+                if nUp == 1.0 then vDir = v end
+                if t and t[1] and t[1].nEntityID == dino then
+                    vDir = v
+                    break
+                end
+            end
+        end
+    end
+    local tResults = Cast(vDir)
     if tResults and #tResults > 0 then
         local hit = tResults[1]
         return hit.nEntityID, vStart + vDir * hit.nDistance, vStart, vDir
@@ -59,25 +110,33 @@ local DartsNeeded = function(entity, nTool)
         local fn = dinos[sName]
         if fn then
             local bOk, n = pcall(fn, dinos, entity)
-            if bOk and global.type(n) == "number" and n > 0 then return math.ceil(n) end
+            if bOk and global.type(n) == "number" and n > 0 then return math.ceil(n), "game estimate" end
         end
     end
-    return nTool == Ranger.Tool.Tranq and 3 or 2
+    return nTool == Ranger.Tool.Tranq and 3 or 2, "mod default"
 end
 
 Ranger.Fire = function(nHand)
     local entity = Ranger.Aim(nHand)
     Bridge.Haptic(nHand, 0.9, 0.08, 0) -- the shot
-    if not IsDinosaur(entity) then return end
+    local sTool = Ranger.nTool == Ranger.Tool.Tranq and "dart rifle" or "medicine gun"
+    if not IsDinosaur(entity) then
+        Bridge.Text(sTool .. ": missed (hit " .. global.tostring(entity) .. ", not a living dinosaur)")
+        return
+    end
     local t = Ranger.tHits[entity] or {tranq = 0, medicine = 0}
     Ranger.tHits[entity] = t
     local dinos = WorldAPIs().dinosaurs
     if Ranger.nTool == Ranger.Tool.Tranq then
         t.tranq = t.tranq + 1
-        if t.tranq >= DartsNeeded(entity, Ranger.Tool.Tranq) then
+        local nNeeded, sSource = DartsNeeded(entity, Ranger.Tool.Tranq)
+        Bridge.Text(sTool .. ": hit dinosaur " .. global.tostring(entity) .. ", dart " .. t.tranq .. " of " .. nNeeded .. " (" .. sSource .. ")")
+        if t.tranq >= nNeeded then
             t.tranq = 0
             if Ranger.Call(dinos, "Tranquillise", entity) then
                 Bridge.Haptic(nHand, 0.5, 0.4, 0) -- long buzz: down
+                local bOk2, bAwake = pcall(dinos.IsConscious, dinos, entity)
+                Bridge.Text(sTool .. ": dinosaur " .. global.tostring(entity) .. " tranquillised (conscious: " .. global.tostring(bOk2 and bAwake) .. ")")
             end
         else
             Bridge.Haptic(nHand, 0.4, 0.05, 0) -- hit
@@ -87,13 +146,18 @@ Ranger.Fire = function(nHand)
         local bOk, bSick = pcall(dinos.IsDiseased, dinos, entity)
         if not bOk or not bSick then
             Bridge.Haptic(nHand, 0.15, 0.15, 0) -- nothing to treat
+            Bridge.Text(sTool .. ": dinosaur " .. global.tostring(entity) .. " is not sick (nothing to treat)")
             return
         end
         t.medicine = t.medicine + 1
-        if t.medicine >= DartsNeeded(entity, Ranger.Tool.Medicine) then
+        local nNeeded, sSource = DartsNeeded(entity, Ranger.Tool.Medicine)
+        Bridge.Text(sTool .. ": hit sick dinosaur " .. global.tostring(entity) .. ", dart " .. t.medicine .. " of " .. nNeeded .. " (" .. sSource .. ")")
+        if t.medicine >= nNeeded then
             t.medicine = 0
             if Ranger.Call(dinos, "RemoveDisease", entity) then
                 Bridge.Haptic(nHand, 0.5, 0.4, 0) -- treated
+                local bOk2, bStill = pcall(dinos.IsDiseased, dinos, entity)
+                Bridge.Text(sTool .. ": dinosaur " .. global.tostring(entity) .. " treated (still sick: " .. global.tostring(bOk2 and bStill) .. ")")
             end
         else
             Bridge.Haptic(nHand, 0.4, 0.05, 0)
@@ -109,8 +173,7 @@ Ranger.Call = function(tApi, sName, entity)
     if fn then bOk, sErr = pcall(fn, tApi, entity) end
     if not bOk and not Ranger.tWarned[sName] then
         Ranger.tWarned[sName] = true
-        api.debug.Trace("JWE3VR ranger: " .. sName .. " failed: " .. global.tostring(sErr))
-        Bridge.Log(900, 0, 0, 0)
+        Bridge.Text("ranger: " .. sName .. " failed: " .. global.tostring(sErr))
     end
     return bOk
 end
