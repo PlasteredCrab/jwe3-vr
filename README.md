@@ -222,7 +222,8 @@ input, `JWE3VR_vr.txt`, not real controllers). Go through it in order; each step
 5. **Controllers:** a dot shows where the dominant laser hits the ground; the trigger selects; one grip drags the
    park, both grips scale and rotate it. Point at the HUD panel: the cursor follows and the trigger clicks a toolbar
    button (log: "laser: pointing at the in-world HUD panel"). Seen on scripted input: one pull on the FIRST PERSON
-   VIEW button opened the drop-a-guest mode, and the trigger on the ground dropped the guest there.
+   VIEW button opened the drop-a-guest mode, and the trigger on the ground dropped the guest there; one grip
+   pulled toward you dragged the park closer, and both grips turned it.
 6. **Tablet and recentre:** off-hand B/Y brings up the game screen with its HUD in front of you and hides it again;
    clicking both thumbsticks recentres.
 6a. **Pause menu:** the menu button pauses; the game's options menu appears on the HUD panel (not on your eyes)
@@ -283,7 +284,8 @@ The file is written with comments on first run. The ones you are most likely to 
 - **Remote testing:** `JWE3VR_shot.req` in the mod folder saves the next frame as `JWE3VR_shot.bmp`;
   `JWE3VR_vr.txt` plays VR controller input (buttons, triggers, grips, sticks, `AIM` = the hands point where the
   headset looks, `AIM=HUD:u,v` = at a point of the in-world HUD panel, `AIM=VIEW:u,v` = through a point of the
-  rendered view, to aim at what a screenshot shows; format in `xr.cpp`), so the mod's own
+  rendered view, to aim at what a screenshot shows; `L=x,y,z` / `R=x,y,z` = a hand at an offset from the head,
+  for grabs; format in `xr.cpp`), so the mod's own
   controller mapping runs with no one wearing the headset;
   `re/remote/vrstep.sh <name> [lines...]` plays one and takes a screenshot.
   `JWE3VR_pad.txt` plays clicks (`CLICK=x,y`), the VR laser's own click path (`LASER=x,y`), `FOCUS`, keys and pad

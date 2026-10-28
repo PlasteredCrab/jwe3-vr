@@ -1,6 +1,15 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-27  0.0.32  Grabbing the park model on scripted input (run 121)
+    - New VR script steps L=x,y,z / R=x,y,z put a hand at an offset from the head, so grabs can be played.
+    - One grip held while the right hand moved 60 cm toward the body: the park slid toward the viewer (the
+      facility moved down the view and grew). Both grips held while the hands turned about 45 degrees around their
+      midpoint: the model turned (the facility's car park pointed right instead of down, other mountains in view).
+    - Both grips spread from 0.3 to 0.8 m: no visible change, as designed - the model scales about the head, so from
+      one viewpoint the picture stays the same; what changes is stereo depth and how far head movement carries,
+      neither of which a screenshot of a resting headset shows. Not verified.
+
 2026-10-27  0.0.31  Taking control of a jeep with the laser (runs 119-120, scripted controllers)
     - New VR script step AIM=VIEW:u,v: the hands point from the head through point u,v of the rendered view, so the
       laser can be aimed at what a screenshot shows.

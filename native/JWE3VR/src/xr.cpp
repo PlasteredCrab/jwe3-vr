@@ -340,6 +340,8 @@ static void PollEvents() {
 //                        top left)
 //   AIM=VIEW:u,v         both hands at the head, pointing through point u,v of the rendered view (aim at what a
 //                        screenshot shows)
+//   L=x,y,z R=x,y,z      that hand at the head plus x,y,z metres (tracking axes: x right, y up, z back), oriented like
+//                        the head (moving it between steps with a grip held drags; both hands scale and turn)
 //   -                    nothing
 // While it plays it replaces the runtime's controller state; the file is consumed when read. Everything downstream
 // (the Lua controls, the virtual pad, the laser) runs as with real controllers.
@@ -348,6 +350,8 @@ struct VrStep {
     bool aim = false;
     bool aimHud = false, aimView = false;
     float hudU = 0.5f, hudV = 0.5f;
+    bool handAt[2]{};
+    Vec3 handOff[2]{};
     ULONGLONG ms = 0;
 };
 static std::vector<VrStep> g_vrScript;
@@ -385,6 +389,9 @@ static bool ParseVrStep(const std::string& line, VrStep& s) {
         if (k == "AIM") s.aim = known = true;
         if (sscanf_s(k.c_str(), "AIM=HUD:%f,%f", &s.hudU, &s.hudV) == 2) s.aimHud = known = true;
         if (sscanf_s(k.c_str(), "AIM=VIEW:%f,%f", &s.hudU, &s.hudV) == 2) s.aimView = known = true;
+        float x = 0, y = 0, z = 0;
+        if (sscanf_s(k.c_str(), "L=%f,%f,%f", &x, &y, &z) == 3) s.handAt[0] = known = true, s.handOff[0] = {x, y, z};
+        if (sscanf_s(k.c_str(), "R=%f,%f,%f", &x, &y, &z) == 3) s.handAt[1] = known = true, s.handOff[1] = {x, y, z};
         if (!known) return false;
     }
     return true;
@@ -454,6 +461,12 @@ static void VrScriptTick(Controls& c, rig::XrSnapshot& snap) {
             std::lock_guard<std::mutex> l(g_ctrlLock);
             g_rawAim[h] = {raw, true};
         }
+    }
+    for (int h = 0; h < 2; ++h) {
+        if (!s.handAt[h] || !snap.head.valid) continue;
+        snap.grip[h] = snap.aim[h] = {{snap.head.pose.q, snap.head.pose.p + s.handOff[h]}, true};
+        std::lock_guard<std::mutex> l(g_ctrlLock);
+        g_rawAim[h] = {{snap.rawHead.q, snap.rawHead.p + s.handOff[h]}, true};
     }
     Vec3 hc, hr, hu;
     float hw = 0, hh = 0;
