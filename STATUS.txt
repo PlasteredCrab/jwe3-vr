@@ -1,6 +1,22 @@
 JWE3 VR - status log (newest first)
 ===================================
 
+2026-10-28  0.0.51  Menu clicks: the game asks Windows where the cursor is; the left eye's jitter is the pairing
+    - 0.0.50's pad A acted on the game's own pad selection (CONTINUE by default), not the laser's item (user: aiming at
+      WORKSHOP opened CONTINUE). Removed. The earlier "A opened LOAD GAME" was the pad selection already being there.
+    - The menus take hover from our posted moves but ignore posted clicks, while real mouse clicks work; the one laser
+      click that worked (CONTINUE, 11:05) had the real cursor resting at 426,430, beside the item. So the click's
+      position likely comes from the real cursor. In-process hooks of user32 now report the laser's point while the
+      laser drives the cursor: GetCursorPos, GetMessagePos, and the pt of mouse messages taken with PeekMessageW /
+      GetMessageW (the real cursor is never moved). The 10 s window line counts each, to see which the game uses.
+      Not yet tried. In the park the game may also edge-scroll from GetCursorPos.
+    - FXAA, 1920x1200 and chromatic aberration off were set in the game's Graphics.config.xml with the user's OK
+      (backup: re/work/Graphics.config.before-fxaa.xml).
+    - User's finding: while two grips zoom (MonoWhileMoving: both eyes the same image) everything is smooth and in line;
+      released (alternate eyes) the left eye jitters and is out of line with the right. So the alternate-eye pairing
+      (which eye and pose each presented frame belongs to, AERPresentLag = 1, set at the remote 2-3 fps) is probably
+      wrong at the headset's 60-70 fps. Next: try AERPresentLag 0 and 2 live while the user watches.
+
 2026-10-28  0.0.50  Menus: the trigger also presses pad A; the anti-aliasing options
     - The user could not open WORKSHOP with the trigger. The press log showed the presses reaching the window on
       WORKSHOP (157,800, 172 ms, game in front), and the remote script's own posted clicks (FOCUS, move, two clicks -

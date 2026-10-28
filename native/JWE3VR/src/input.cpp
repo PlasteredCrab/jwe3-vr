@@ -72,13 +72,13 @@ static bool g_trigTouched = false;
 // it hundreds of pixels, so a quick pull is a click by time alone (first headset test: park presses became drags
 // within 15 ms) and the pull-start correction is not used.
 static std::atomic<bool> g_cursorFromPark{false};
-// Front-end menus: the main menu ignores posted clicks (first headset test, 12:23-12:26: the laser's presses and the
-// remote script's own clicks reached the window on WORKSHOP and SETTINGS and did nothing), but pad A activates the item
-// the cursor highlights (seen: A opened LOAD GAME). So there a trigger press also pulses the virtual pad: a short left
-// trigger first (the game takes the first pad input after mouse use only as a switch to the pad), then A.
-static ULONGLONG g_menuPulseAt = 0;
-static bool g_menuTrigPrev = false;
-static std::atomic<bool> g_menuPulseActive{false};
+// The real cursor's position, as the game asks Windows for it, is the laser's while the laser drives the cursor
+// (first headset test: the menus took hover from our posted moves but ignored our clicks, while real mouse clicks
+// worked; the one laser click that did work had the real cursor resting right beside the item). In-process hooks
+// of user32 (as the XInput ones); the real cursor is never moved. Covered: GetCursorPos, GetMessagePos and the pt of
+// mouse messages the game takes from its queue (PeekMessageW / GetMessageW). Counted in the 10 s window line.
+static std::atomic<ULONGLONG> g_laserCursorAt{0}; // last frame the laser drove the cursor
+static std::atomic<unsigned> g_gcpCalls{0}, g_gcpLaser{0}, g_gmpCalls{0}, g_gmpLaser{0}, g_msgPt{0};
 static Vec3 g_cursorSmooth;
 static bool g_cursorInit = false;
 
@@ -287,7 +287,7 @@ static DWORD PadState(DWORD index, XINPUT_STATE* state, GetStateFn original) {
         if (g_padLive && state) {
             // Connected whenever the controllers are: the pad's input only while Lua passes it through, else at
             // rest (a pad that came and went would be dropped and found again by the game every second).
-            bool through = g_flags.pad == PadMode::Passthrough || g_menuPulseActive.load();
+            bool through = g_flags.pad == PadMode::Passthrough;
             state->dwPacketNumber = through ? g_packet : 1;
             state->Gamepad = through ? g_pad : XINPUT_GAMEPAD{};
             return ERROR_SUCCESS;
@@ -370,7 +370,77 @@ template <int N> static bool HookXInput(HMODULE m) {
     return ok;
 }
 
+static bool LaserCursorScreen(POINT& out) {
+    LPARAM pt = g_cursorPt.load();
+    if (!g_hwnd || pt == -1 || GetTickCount64() - g_laserCursorAt.load() > 250) return false;
+    out = {(short)LOWORD(pt), (short)HIWORD(pt)};
+    return ClientToScreen(g_hwnd, &out) != FALSE;
+}
+
+using GetCursorPosFn = BOOL(WINAPI*)(LPPOINT);
+using GetMessagePosFn = DWORD(WINAPI*)();
+using PeekMessageWFn = BOOL(WINAPI*)(LPMSG, HWND, UINT, UINT, UINT);
+using GetMessageWFn = BOOL(WINAPI*)(LPMSG, HWND, UINT, UINT);
+static GetCursorPosFn o_GetCursorPos = nullptr;
+static GetMessagePosFn o_GetMessagePos = nullptr;
+static PeekMessageWFn o_PeekMessageW = nullptr;
+static GetMessageWFn o_GetMessageW = nullptr;
+
+static BOOL WINAPI Hk_GetCursorPos(LPPOINT p) {
+    ++g_gcpCalls;
+    POINT c;
+    if (p && LaserCursorScreen(c)) {
+        *p = c;
+        ++g_gcpLaser;
+        return TRUE;
+    }
+    return o_GetCursorPos(p);
+}
+
+static DWORD WINAPI Hk_GetMessagePos() {
+    ++g_gmpCalls;
+    POINT c;
+    if (LaserCursorScreen(c)) {
+        ++g_gmpLaser;
+        return MAKELONG((short)c.x, (short)c.y);
+    }
+    return o_GetMessagePos();
+}
+
+static void FixMessagePt(LPMSG m) {
+    if (!m || m->hwnd != g_hwnd || m->message < WM_MOUSEFIRST || m->message > WM_MOUSELAST) return;
+    POINT c;
+    if (LaserCursorScreen(c)) {
+        m->pt = c;
+        ++g_msgPt;
+    }
+}
+
+static BOOL WINAPI Hk_PeekMessageW(LPMSG m, HWND h, UINT mn, UINT mx, UINT rm) {
+    BOOL r = o_PeekMessageW(m, h, mn, mx, rm);
+    if (r) FixMessagePt(m);
+    return r;
+}
+
+static BOOL WINAPI Hk_GetMessageW(LPMSG m, HWND h, UINT mn, UINT mx) {
+    BOOL r = o_GetMessageW(m, h, mn, mx);
+    if (r > 0) FixMessagePt(m);
+    return r;
+}
+
+static void HookCursorQueries() {
+    HMODULE u = GetModuleHandleW(L"user32.dll");
+    if (!u) return;
+    hooks::Create("user32!GetCursorPos", (void*)GetProcAddress(u, "GetCursorPos"), (void*)&Hk_GetCursorPos, (void**)&o_GetCursorPos);
+    hooks::Create("user32!GetMessagePos", (void*)GetProcAddress(u, "GetMessagePos"), (void*)&Hk_GetMessagePos,
+                  (void**)&o_GetMessagePos);
+    hooks::Create("user32!PeekMessageW", (void*)GetProcAddress(u, "PeekMessageW"), (void*)&Hk_PeekMessageW,
+                  (void**)&o_PeekMessageW);
+    hooks::Create("user32!GetMessageW", (void*)GetProcAddress(u, "GetMessageW"), (void*)&Hk_GetMessageW, (void**)&o_GetMessageW);
+}
+
 bool InstallHooks() {
+    HookCursorQueries();
     // System DLLs only (System32): load the two Windows ships so their exports are hooked even if the game loads
     // them later; xinput1_3 (DirectX redistributable) only if the game already has it.
     bool any = false;
@@ -426,16 +496,18 @@ static LRESULT CALLBACK DiagProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 static void LogWindowCounts(const char* why) {
     LPARAM m = g_wmLastMove.load();
     POINT cur{};
-    bool haveCur = g_hwnd && GetCursorPos(&cur) && ScreenToClient(g_hwnd, &cur);
+    bool haveCur = g_hwnd && (o_GetCursorPos ? o_GetCursorPos(&cur) : GetCursorPos(&cur)) && ScreenToClient(g_hwnd, &cur);
     RECT rc{};
     if (g_hwnd) GetClientRect(g_hwnd, &rc);
     LOGI("window (%s): WM_MOUSEMOVE %u (last %d,%d), L down/up %u/%u, R down %u, WM_INPUT %u, activate %u, killfocus %u, "
-         "setfocus %u, capturechanged %u, setcursor %u, keys %u; real cursor %s%d,%d (client %ldx%ld); foreground %s",
+         "setfocus %u, capturechanged %u, setcursor %u, keys %u; real cursor %s%d,%d (client %ldx%ld); foreground %s; "
+         "GetCursorPos %u (laser %u), GetMessagePos %u (laser %u), message pt set %u",
          why, g_wmMove.exchange(0), m == -1 ? -1 : (int)(short)LOWORD(m), m == -1 ? -1 : (int)(short)HIWORD(m),
          g_wmLDown.exchange(0), g_wmLUp.exchange(0), g_wmRDown.exchange(0), g_wmInput.exchange(0), g_wmActivate.exchange(0),
          g_wmKillFocus.exchange(0), g_wmSetFocus.exchange(0), g_wmCapture.exchange(0), g_wmSetCursor.exchange(0),
          g_wmKey.exchange(0), haveCur ? "" : "(unknown) ", (int)cur.x, (int)cur.y, rc.right, rc.bottom,
-         GetForegroundWindow() == g_hwnd ? "the game" : "another window");
+         GetForegroundWindow() == g_hwnd ? "the game" : "another window", g_gcpCalls.exchange(0), g_gcpLaser.exchange(0),
+         g_gmpCalls.exchange(0), g_gmpLaser.exchange(0), g_msgPt.exchange(0));
 }
 
 void SetGameWindow(HWND hwnd) {
@@ -692,21 +764,9 @@ void OnFrame(bool screenVisible, bool hudVisible, bool frontEnd) {
         MouseButton(1, false);
     }
 
-    // Front-end menu: the trigger's press also starts the pad pulse (see g_menuPulseAt).
-    bool trig = c.trigger[dom] > 0.6f;
-    // On the in-park tablet too (the user found its clicks ignored as well). Whether A there acts on the item the
-    // laser highlights or on the game's own pad focus is not known yet: the log says which screen each pulse was for.
-    if (screenVisible && pointing && trig && !g_menuTrigPrev) {
-        g_menuPulseAt = now;
-        static std::atomic<int> logged{0};
-        if (logged.fetch_add(1) < 100)
-            LOGI("menu: trigger press also sends pad A (after a left-trigger nudge) on the %s",
-                 frontEnd ? "front end (main menu / loading)" : "in-park tablet");
-    }
-    g_menuTrigPrev = trig;
-    ULONGLONG pulse = g_menuPulseAt ? now - g_menuPulseAt : 1000;
-    if (pulse >= 330) g_menuPulseAt = 0;
-    g_menuPulseActive = pulse < 330;
+    // The laser drives the cursor this frame: the game's cursor queries get its position (see g_laserCursorAt).
+    if (pointing) g_laserCursorAt = now;
+    (void)frontEnd;
 
     // Virtual pad: the VR controllers mirrored onto an Xbox layout, then Lua's overrides.
     XINPUT_GAMEPAD p{};
@@ -746,12 +806,6 @@ void OnFrame(bool screenVisible, bool hudVisible, bool frontEnd) {
         if (ov.mask & OvLT) p.bLeftTrigger = Trig(ov.lt);
         if (ov.mask & OvRT) p.bRightTrigger = Trig(ov.rt);
         if (ov.mask & OvButtons) p.wButtons = (WORD)ov.buttons;
-    }
-    if (pulse < 330) {
-        // Only the pulse reaches the game while it runs (no sticks: they would move the menu's selection).
-        p = XINPUT_GAMEPAD{};
-        if (pulse < 80) p.bLeftTrigger = 255;
-        else if (pulse >= 160) p.wButtons = XINPUT_GAMEPAD_A;
     }
     {
         std::lock_guard<std::mutex> l(g_lock);
