@@ -368,7 +368,61 @@ bool InstallHooks() {
     return any;
 }
 
-void SetGameWindow(HWND hwnd) { g_hwnd = hwnd; }
+// Verbose input diagnostics (first headset test: trigger presses landed on CONTINUE with the game in front, and the
+// main menu still ignored them, while the same posted clicks work in remote runs). The game window is subclassed -
+// in-process, this DLL's own code; nothing outside the game is touched - to count what actually reaches it, and the
+// counts are logged every 10 s and around each press.
+static WNDPROC g_origProc = nullptr;
+static std::atomic<unsigned> g_wmMove{0}, g_wmLDown{0}, g_wmLUp{0}, g_wmRDown{0}, g_wmInput{0}, g_wmActivate{0},
+    g_wmKillFocus{0}, g_wmSetFocus{0}, g_wmCapture{0}, g_wmSetCursor{0}, g_wmKey{0};
+static std::atomic<LPARAM> g_wmLastMove{-1};
+static std::atomic<int> g_wmButtonLogs{0};
+
+static LRESULT CALLBACK DiagProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_MOUSEMOVE: ++g_wmMove; g_wmLastMove = lp; break;
+    case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+        (msg == WM_LBUTTONUP ? g_wmLUp : g_wmLDown)++;
+        if (g_wmButtonLogs.fetch_add(1) < 40)
+            LOGI("window: %s at %d,%d (wParam %#llx) reached the game window", msg == WM_LBUTTONUP ? "WM_LBUTTONUP" :
+                 msg == WM_LBUTTONDOWN ? "WM_LBUTTONDOWN" : "WM_LBUTTONDBLCLK", (int)(short)LOWORD(lp), (int)(short)HIWORD(lp),
+                 (unsigned long long)wp);
+        break;
+    case WM_RBUTTONDOWN: ++g_wmRDown; break;
+    case WM_INPUT: ++g_wmInput; break;
+    case WM_ACTIVATE: case WM_ACTIVATEAPP: case WM_NCACTIVATE: ++g_wmActivate; break;
+    case WM_KILLFOCUS: ++g_wmKillFocus; break;
+    case WM_SETFOCUS: ++g_wmSetFocus; break;
+    case WM_CAPTURECHANGED: ++g_wmCapture; break;
+    case WM_SETCURSOR: ++g_wmSetCursor; break;
+    case WM_KEYDOWN: case WM_SYSKEYDOWN: ++g_wmKey; break;
+    default: break;
+    }
+    return CallWindowProcW(g_origProc, h, msg, wp, lp);
+}
+
+static void LogWindowCounts(const char* why) {
+    LPARAM m = g_wmLastMove.load();
+    POINT cur{};
+    bool haveCur = g_hwnd && GetCursorPos(&cur) && ScreenToClient(g_hwnd, &cur);
+    RECT rc{};
+    if (g_hwnd) GetClientRect(g_hwnd, &rc);
+    LOGI("window (%s): WM_MOUSEMOVE %u (last %d,%d), L down/up %u/%u, R down %u, WM_INPUT %u, activate %u, killfocus %u, "
+         "setfocus %u, capturechanged %u, setcursor %u, keys %u; real cursor %s%d,%d (client %ldx%ld); foreground %s",
+         why, g_wmMove.exchange(0), m == -1 ? -1 : (int)(short)LOWORD(m), m == -1 ? -1 : (int)(short)HIWORD(m),
+         g_wmLDown.exchange(0), g_wmLUp.exchange(0), g_wmRDown.exchange(0), g_wmInput.exchange(0), g_wmActivate.exchange(0),
+         g_wmKillFocus.exchange(0), g_wmSetFocus.exchange(0), g_wmCapture.exchange(0), g_wmSetCursor.exchange(0),
+         g_wmKey.exchange(0), haveCur ? "" : "(unknown) ", (int)cur.x, (int)cur.y, rc.right, rc.bottom,
+         GetForegroundWindow() == g_hwnd ? "the game" : "another window");
+}
+
+void SetGameWindow(HWND hwnd) {
+    g_hwnd = hwnd;
+    if (hwnd && !g_origProc) {
+        g_origProc = (WNDPROC)SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)&DiagProc);
+        LOGI("window: message counter installed on the game window (unicode %d)", (int)IsWindowUnicode(hwnd));
+    }
+}
 
 void SetFlags(const LuaFlags& f) {
     std::lock_guard<std::mutex> l(g_lock);
@@ -431,6 +485,11 @@ void MouseButton(int button, bool down) {
     // Every press for a while, with where it went and whether the game was in front: JWE3 ignores clicks while its
     // window is in the background (first headset test: the menu highlighted under the laser, the trigger did nothing).
     static std::atomic<int> logged{0};
+    static ULONGLONG downAt[2]{};
+    if (down) downAt[button] = GetTickCount64();
+    else if (logged.load() <= 20) LOGI("laser: %s release after %llu ms", button == 0 ? "left" : "right",
+                                       (unsigned long long)(GetTickCount64() - downAt[button]));
+    if (down && logged.load() < 20) LogWindowCounts("before this press");
     if (down && logged.fetch_add(1) < 20) {
         LPARAM pt = g_cursorPt.load();
         LOGI("laser: %s press at %d,%d; game window %s", button == 0 ? "left" : "right", (int)(short)LOWORD(pt),
@@ -504,6 +563,11 @@ static bool ScreenPointer(int hand, float dt, bool hud = false) {
 void OnFrame(bool screenVisible, bool hudVisible) {
     const Settings& cfg = config::Get();
     ULONGLONG now = GetTickCount64();
+    static ULONGLONG lastCounts = 0;
+    if (g_origProc && now - lastCounts >= 10000) {
+        lastCounts = now;
+        LogWindowCounts(screenVisible ? "flat screen" : hudVisible ? "park, HUD panel" : "park");
+    }
     float dt = g_lastFrame ? std::min((now - g_lastFrame) / 1000.f, 0.1f) : 0.f;
     g_lastFrame = now;
 

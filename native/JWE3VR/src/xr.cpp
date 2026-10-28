@@ -823,6 +823,12 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
     bool showProjection = in.projection, showScreen = in.screen;
 
     bool eyesOk = showProjection && eyes[0].valid && eyes[1].valid && g_swaps[0].handle && g_frame.shouldRender;
+    if (showProjection && !eyesOk) {
+        static std::atomic<int> logged{0};
+        if (logged.fetch_add(1) < 5)
+            LOGI("EndFrame: eye images asked for but not sent (eye views valid %d/%d, swapchain %d, shouldRender %d)",
+                 (int)eyes[0].valid, (int)eyes[1].valid, g_swaps[0].handle != XR_NULL_HANDLE, (int)g_frame.shouldRender);
+    }
     if (eyesOk) {
         for (int i = 0; i < 2; ++i) {
             pv[i].pose = ToXr(eyes[i].stagePose);
@@ -904,7 +910,31 @@ void EndFrame(const EyeView eyes[2], const Layers& in) {
     ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
     ei.layerCount = layerCount;
     ei.layers = layers;
-    Ok(xrEndFrame(g_session, &ei), "xrEndFrame");
+    XrResult er = xrEndFrame(g_session, &ei);
+    Ok(er, "xrEndFrame");
+
+    // Verbose (first headset test: the park never showed while the menu, dot and beam did): every 10 s what this
+    // frame handed the compositor - which layers, the eye views' field of view, and how far each eye view is from
+    // where the head is now (a wrong pose would put the picture out of sight).
+    static ULONGLONG lastLog = 0;
+    ULONGLONG now = GetTickCount64();
+    if (now - lastLog >= 10000) {
+        lastLog = now;
+        char eyeInfo[256] = "no eye images this frame";
+        if (eyesOk) {
+            const EyeView& e = eyes[0];
+            Vec3 d = e.stagePose.p - g_rawHead.p;
+            Vec3 fe = Rotate(e.stagePose.q, {0, 0, -1}), fh = Rotate(g_rawHead.q, {0, 0, -1});
+            float ang = std::acos(std::clamp(Dot(fe, fh), -1.f, 1.f)) * 57.2958f;
+            snprintf(eyeInfo, sizeof(eyeInfo),
+                     "eye 0 fov L%.0f R%.0f U%.0f D%.0f deg, %.2f m and %.0f deg from the head now, image %ux%u",
+                     e.fov.left * 57.2958f, e.fov.right * 57.2958f, e.fov.up * 57.2958f, e.fov.down * 57.2958f, Length(d),
+                     ang, g_swaps[0].width, g_swaps[0].height);
+        }
+        LOGI("EndFrame: %u layers (eyes %d, screen %d, hud %d, dot %d, beam %d), result %d, shouldRender %d; %s", layerCount,
+             (int)eyesOk, (int)(showScreen && g_swaps[2].handle && g_frame.shouldRender), (int)(in.hud && eyesOk),
+             (int)in.dot, (int)in.beam, (int)er, (int)g_frame.shouldRender, eyeInfo);
+    }
 }
 
 Controls GetControls() {

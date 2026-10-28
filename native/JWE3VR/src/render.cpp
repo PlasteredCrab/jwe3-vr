@@ -414,17 +414,28 @@ bool SaveReadbackBmp(ID3D12Resource* rb, const D3D12_PLACED_SUBRESOURCE_FOOTPRIN
     std::vector<uint8_t> bgr((size_t)w * h * 3);
     UINT step = TexelBytes(format);
     bool ok = DebugFormatSupported(format);
+    // Alpha of the image as the headset gets it (the BMP drops it): with 10-bit RGB the alpha has 2 bits, 0..3.
+    bool tenBit = format == DXGI_FORMAT_R10G10B10A2_UNORM || format == DXGI_FORMAT_R10G10B10A2_TYPELESS;
+    bool eightBit = TexelBytes(format) == 4 && !tenBit && format != DXGI_FORMAT_R11G11B10_FLOAT;
+    uint64_t alphaSum = 0, alphaZero = 0;
     for (UINT y = 0; y < h && ok; ++y) {
         const uint8_t* row = p + fp.Offset + (size_t)y * fp.Footprint.RowPitch;
         uint8_t* out = &bgr[(size_t)y * w * 3];
         for (UINT x = 0; x < w; ++x) {
             uint8_t r, g, b;
-            DecodeTexel(format, row + (size_t)x * step, r, g, b);
+            const uint8_t* t = row + (size_t)x * step;
+            DecodeTexel(format, t, r, g, b);
             out[x * 3 + 0] = b, out[x * 3 + 1] = g, out[x * 3 + 2] = r;
+            uint32_t a = tenBit ? (uint32_t)(t[3] >> 6) * 85u : eightBit ? t[3] : 255u;
+            alphaSum += a;
+            alphaZero += a == 0;
         }
     }
     D3D12_RANGE none{0, 0};
     rb->Unmap(0, &none);
+    if (ok && (tenBit || eightBit) && w && h)
+        LOGI("debug: %ls alpha mean %.0f of 255, %.0f%% of pixels alpha 0 (format %d)", file, (double)alphaSum / ((double)w * h),
+             100.0 * (double)alphaZero / ((double)w * h), (int)format);
     if (ok) WriteBmp(ModuleDir() + file, w, h, bgr);
     return ok;
 }
@@ -542,6 +553,10 @@ static void DebugScreenshot() {
 }
 
 // Every 10 s: game frames per second, the OpenXR session state and the time Present spent in xrWaitFrame.
+// What each presented frame handed the headset (first headset test: the park never showed though its eye images
+// were good - were they submitted?). Counted per 10 s window with the frame rate.
+static std::atomic<unsigned> g_statProj{0}, g_statScreen{0}, g_statNoReq{0}, g_statHalfEyes{0};
+
 static void LogFrameStats(ULONGLONG waitMs) {
     static ULONGLONG windowStart = 0, waitTotal = 0;
     static unsigned frames = 0;
@@ -557,6 +572,8 @@ static void LogFrameStats(ULONGLONG waitMs) {
              "(on backbuffer %.1f), copies into backbuffer %.1f",
              g_statSetRt.exchange(0) / n, g_statRenderPass.exchange(0) / n, g_statLegacyBbBarrier.exchange(0) / n,
              g_statBarrier7.exchange(0) / n, g_statBarrier7Bb.exchange(0) / n, g_statCopyToBb.exchange(0) / n);
+        LOGI("layers: eye images in %u frames (%u of them with only one eye ready yet), flat screen in %u, no render request "
+             "for %u", g_statProj.exchange(0), g_statHalfEyes.exchange(0), g_statScreen.exchange(0), g_statNoReq.exchange(0));
         windowStart = now;
         frames = 0;
         waitTotal = 0;
@@ -676,6 +693,19 @@ static void OnPresent(IDXGISwapChain* sc) {
     // Debug (JWE3VR_aer.req): the next presented frames, each saved with the eye and tick it is paired with, to
     // check the alternate-eye pairing (with a large IPDScale the two eyes' frames differ visibly).
     static int s_aerDump = 0, s_aerIndex = 0;
+    // Verbose: once per session, 20 s after the eye images start, the same dump runs by itself (2 frames), so the log
+    // gets the eye images' alpha without anyone asking (first headset test: is a zero alpha hiding the park?).
+    static ULONGLONG s_firstEyes = 0;
+    static bool s_autoDumped = false;
+    if (!s_autoDumped && haveReq && rig::CurrentKind() != rig::AnchorKind::Off && rig::CurrentKind() != rig::AnchorKind::Screen) {
+        if (!s_firstEyes) s_firstEyes = now;
+        else if (now - s_firstEyes > 20000 && s_aerDump == 0) {
+            s_autoDumped = true;
+            s_aerDump = 2;
+            s_aerIndex = 0;
+            LOGI("aer debug: automatic check of the eye images (alpha) 20 s into the immersive view");
+        }
+    }
     if (s_aerDump == 0 && now - g_lastConfigCheck < 50) {
         std::wstring aerReq = ModuleDir() + L"JWE3VR_aer.req";
         if (GetFileAttributesW(aerReq.c_str()) != INVALID_FILE_ATTRIBUTES) {
@@ -748,6 +778,10 @@ static void OnPresent(IDXGISwapChain* sc) {
     xr::Layers layers;
     layers.projection = immersive;
     layers.screen = screen;
+    if (immersive) ++g_statProj;
+    if (immersive && !(g_views[0].valid && g_views[1].valid)) ++g_statHalfEyes;
+    if (screen) ++g_statScreen;
+    if (!haveReq) ++g_statNoReq;
     // In-world HUD: the UI the game drew this frame went into its own texture instead of the eyes.
     if (ID3D12Resource* hudTex = passes::TakeHudTexture(); hudTex && immersive) {
         if (ID3D12Resource* img = xr::AcquireImage(xr::SwapId::Hud)) {
